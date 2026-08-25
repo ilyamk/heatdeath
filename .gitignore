@@ -1,0 +1,10 @@
+node_modules/
+
+# Release signing keys. Leaking these lets an attacker sign a backdoored build
+# that verifies perfectly; losing them means you can no longer sign at all.
+keys/
+
+# The single executable is ~144 MB. Committing it would put that blob in git
+# history permanently. Attach it to a release instead; the manifest, the
+# public keys and the build recipe below stay tracked so anyone can verify it.
+dist/heatdeath

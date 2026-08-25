@@ -1,0 +1,18 @@
+Reproduce this release
+======================
+
+  1. Install Node v26.5.0 (the exact build matters for the binary hash).
+  2. git checkout the tag this release was cut from.
+  3. rm -rf node_modules && npm ci --ignore-scripts
+  4. ./build/build.sh
+  5. ( cd dist && shasum -a 256 -c SHA256SUMS )
+
+The .mjs bundle is reproducible on any machine with the same esbuild version
+(0.25.0); it contains no absolute paths and no timestamps.
+
+The single executable embeds the Node v26.5.0 runtime, so its hash is
+reproducible only against that same Node build for the same platform
+(darwin/arm64).
+
+If step 5 fails, DO NOT USE THE ARTIFACT. Read the source instead: the .mjs
+bundle is the primary artifact precisely because it needs no build to audit.

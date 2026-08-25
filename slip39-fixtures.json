@@ -1,0 +1,287 @@
+{
+  "_README": [
+    "Two kinds of pin for encodeShare, covering what the 45 official Trezor",
+    "vectors never reach.",
+    "",
+    "fieldPins: encodeShare called directly on synthetic share records whose",
+    "  every packed field sits at its extreme - identifier 0 and 32767,",
+    "  iterationExponent 0 and 15, groupIndex/memberIndex 0 and 15,",
+    "  groupThreshold/groupCount 1 and 16, extendable both ways. No key",
+    "  derivation is involved, which matters: driving iterationExponent 15",
+    "  through a real split costs 327,680,000 PBKDF2 iterations and 26",
+    "  seconds, and the KDF is not what these pins are testing.",
+    "",
+    "fixtures: full 16-group x 16-member splits, which exercise the block and",
+    "  interleaving structure at maximum width. iterationExponent 0 keeps them",
+    "  at 7 ms.",
+    "",
+    "PROVENANCE. Every fieldPin mnemonic was parsed by the reference",
+    "python-shamir-mnemonic, which agreed on all eight fields and on the share",
+    "value at every extreme (6/6). The 16-group fixtures were likewise recovered",
+    "by the reference to the exact secret. So both were externally correct when",
+    "created; thereafter they are regression anchors.",
+    "",
+    "The externally-authoritative encode check that runs continuously is the",
+    "re-encoding of all 77 reference share strings in slip39-vectors.json.",
+    "",
+    "secret: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "rng: counter-mode SHA-256 over \"evm-seed-tool/slip39-fixture/\" + name",
+    "",
+    "The rng seed string above still says \"evm-seed-tool\" after the project",
+    "was renamed to HEATDEATH. That is deliberate. It is not a brand string but",
+    "the provenance anchor of these expectations: they were generated with this",
+    "exact seed and then confirmed by the reference python-shamir-mnemonic.",
+    "Renaming it would regenerate them from this implementation alone, turning",
+    "externally-verified vectors into self-referential ones. See the note at the",
+    "call site in slip39.mjs."
+  ],
+  "secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "fieldPins": [
+    {
+      "name": "all fields at maximum / 16B",
+      "fields": {
+        "identifier": 32767,
+        "extendable": true,
+        "iterationExponent": 15,
+        "groupIndex": 15,
+        "groupThreshold": 16,
+        "groupCount": 16,
+        "memberIndex": 15,
+        "memberThreshold": 16
+      },
+      "valueHex": "000102030405060708090a0b0c0d0e0f",
+      "mnemonic": "zero zero zero zero academic acrobat aluminum debris activity alarm busy learn election animal deal snapshot likely render coding costume"
+    },
+    {
+      "name": "all fields at maximum / 32B",
+      "fields": {
+        "identifier": 32767,
+        "extendable": true,
+        "iterationExponent": 15,
+        "groupIndex": 15,
+        "groupThreshold": 16,
+        "groupCount": 16,
+        "memberIndex": 15,
+        "memberThreshold": 16
+      },
+      "valueHex": "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100",
+      "mnemonic": "zero zero zero zero award wine sympathy deny repeat photo lungs symbolic gray fact depart lungs away easel universe invasion similar triumph numb charity install mouse else skin ceramic easy buyer keyboard depart"
+    },
+    {
+      "name": "all fields at minimum / 16B",
+      "fields": {
+        "identifier": 0,
+        "extendable": false,
+        "iterationExponent": 0,
+        "groupIndex": 0,
+        "groupThreshold": 1,
+        "groupCount": 1,
+        "memberIndex": 0,
+        "memberThreshold": 1
+      },
+      "valueHex": "000102030405060708090a0b0c0d0e0f",
+      "mnemonic": "academic academic academic academic academic acrobat aluminum debris activity alarm busy learn election animal deal snapshot likely elevator display endless"
+    },
+    {
+      "name": "all fields at minimum / 32B",
+      "fields": {
+        "identifier": 0,
+        "extendable": false,
+        "iterationExponent": 0,
+        "groupIndex": 0,
+        "groupThreshold": 1,
+        "groupCount": 1,
+        "memberIndex": 0,
+        "memberThreshold": 1
+      },
+      "valueHex": "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100",
+      "mnemonic": "academic academic academic academic award wine sympathy deny repeat photo lungs symbolic gray fact depart lungs away easel universe invasion similar triumph numb charity install mouse else skin ceramic easy deploy dive jacket"
+    },
+    {
+      "name": "alternating bit pattern / 16B",
+      "fields": {
+        "identifier": 21845,
+        "extendable": false,
+        "iterationExponent": 10,
+        "groupIndex": 5,
+        "groupThreshold": 11,
+        "groupCount": 12,
+        "memberIndex": 10,
+        "memberThreshold": 6
+      },
+      "valueHex": "000102030405060708090a0b0c0d0e0f",
+      "mnemonic": "plot plot forget treat academic acrobat aluminum debris activity alarm busy learn election animal deal snapshot likely smart secret fact"
+    },
+    {
+      "name": "alternating bit pattern / 32B",
+      "fields": {
+        "identifier": 21845,
+        "extendable": false,
+        "iterationExponent": 10,
+        "groupIndex": 5,
+        "groupThreshold": 11,
+        "groupCount": 12,
+        "memberIndex": 10,
+        "memberThreshold": 6
+      },
+      "valueHex": "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100",
+      "mnemonic": "plot plot forget treat award wine sympathy deny repeat photo lungs symbolic gray fact depart lungs away easel universe invasion similar triumph numb charity install mouse else skin ceramic easy traffic axis short"
+    }
+  ],
+  "fixtures": [
+    {
+      "name": "16 groups x 2-of-16, group threshold 16",
+      "groupThreshold": 16,
+      "groups": [
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        }
+      ],
+      "identifier": 32767,
+      "extendable": false,
+      "iterationExponent": 0,
+      "shareCount": 256,
+      "sha256": "2ab67a208f43a85219d056c5b9f2e69cb118c24bd537ca4b2bd3c4a0967e67cc",
+      "firstShare": "zero walnut award roster adjust ocean tolerate username airline blue space merchant premium paid dress pleasure frequent herald space squeeze maiden surface ending nail empty junior webcam lips exhaust sniff repair engage prospect",
+      "lastShare": "zero walnut zero withdraw artist have criminal stadium prepare voter prize cylinder mandate recall moment closet liberty promise warmth hand fragment advance explain season acquire kitchen birthday tackle presence fawn merchant often bulge"
+    },
+    {
+      "name": "16 groups x 2-of-16, extendable",
+      "groupThreshold": 16,
+      "groups": [
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        },
+        {
+          "threshold": 2,
+          "count": 16
+        }
+      ],
+      "identifier": 0,
+      "extendable": true,
+      "iterationExponent": 0,
+      "shareCount": 256,
+      "sha256": "66c803f77bf7b290085a0991218dc7a2000575f4deb242053b1fbbf14c3f69cb",
+      "firstShare": "academic again award roster argue carbon evening process bolt grief regular devote dwarf space says deal realize skunk declare lunch merit duration friar clogs voice minister bundle knit founder oven gasoline crisis afraid",
+      "lastShare": "academic again zero withdraw acne width gravity alien level writing ruler cowboy decrease volume echo tendency cover twin gums style priest preach numb perfect pulse gesture ounce wisdom debris enjoy fluff style sunlight"
+    }
+  ]
+}

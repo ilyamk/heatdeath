@@ -1,0 +1,42 @@
+{
+  "name": "heatdeath",
+  "version": "2.0.0",
+  "private": true,
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <27"
+  },
+  "//": [
+    "Every command that can touch a secret runs under Node's permission model.",
+    "--permission denies network, child processes, worker threads, native",
+    "addons, FFI, the inspector and all filesystem writes at the runtime level.",
+    "The two --allow-fs-read entries are the minimum needed: the package",
+    "directory (to import node_modules) and /dev/urandom (an entropy source).",
+    "This is enforcement, not a claim: run `npm run prove-sandbox` to see it."
+  ],
+  "scripts": {
+    "self-test": "node generate.mjs --self-test",
+    "wizard": "node --permission --allow-fs-read=. --allow-fs-read=/dev/urandom generate.mjs --wizard --qr",
+    "generate": "node --permission --allow-fs-read=. --allow-fs-read=/dev/urandom generate.mjs --generate",
+    "generate:dice": "node --permission --allow-fs-read=. --allow-fs-read=/dev/urandom generate.mjs --generate --dice --wipe-screen",
+    "generate:account": "node --permission --allow-fs-read=. --allow-fs-read=/dev/urandom generate.mjs --generate --dice --scheme=account --wipe-screen",
+    "generate:private": "node --permission --allow-fs-read=. --allow-fs-read=/dev/urandom generate.mjs --generate --show-private",
+    "verify": "node --permission --allow-fs-read=. --allow-fs-read=/dev/urandom generate.mjs --verify",
+    "verify:account": "node --permission --allow-fs-read=. --allow-fs-read=/dev/urandom generate.mjs --verify --scheme=account",
+    "split": "node --permission --allow-fs-read=. --allow-fs-read=/dev/urandom generate.mjs --split",
+    "combine": "node --permission --allow-fs-read=. --allow-fs-read=/dev/urandom generate.mjs --combine",
+    "op-export": "node --permission --allow-fs-read=. --allow-fs-read=/dev/urandom --allow-child-process generate.mjs --op-export --accounts=3",
+    "op-export:dry": "node --permission --allow-fs-read=. --allow-fs-read=/dev/urandom --allow-child-process generate.mjs --op-export --accounts=3 --dry-run",
+    "prove-sandbox": "node --permission --allow-fs-read=. --allow-fs-read=/dev/urandom generate.mjs --prove-sandbox",
+    "build": "./build/build.sh",
+    "sign": "node build/sign.mjs",
+    "verify-release": "node build/verify-release.mjs"
+  },
+  "dependencies": {
+    "@noble/curves": "2.2.0",
+    "@noble/hashes": "2.2.0",
+    "@scure/bip32": "2.2.0",
+    "@scure/bip39": "2.2.0"
+  }
+}

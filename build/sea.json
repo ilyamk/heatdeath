@@ -1,0 +1,10 @@
+{
+  "main": "../dist/heatdeath.mjs",
+  "mainFormat": "module",
+  "output": "../dist/heatdeath",
+  "disableExperimentalSEAWarning": true,
+  "useCodeCache": false,
+  "useSnapshot": false,
+  "execArgv": ["--permission", "--allow-fs-read=/dev/urandom"],
+  "execArgvExtension": "none"
+}
