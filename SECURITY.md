@@ -9,8 +9,9 @@ ahead of the last signed release and must be treated as developer code.
 
 Do not open a public issue for a defect that could expose a mnemonic, derive a
 wrong wallet, weaken entropy, bypass release verification, or compromise signing
-material. Use GitHub's **Security → Report a vulnerability** form for this
-repository. If private vulnerability reporting is temporarily unavailable, open
+material. Use GitHub's
+[private vulnerability report](https://github.com/ilyamk/heatdeath/security/advisories/new)
+form. If private vulnerability reporting is temporarily unavailable, open
 an issue containing no technical details and ask the maintainer to establish a
 private channel.
 
