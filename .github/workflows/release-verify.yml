@@ -56,8 +56,30 @@ jobs:
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
+          release_id="$({
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq '.[] | select(.tag_name == env.RELEASE_TAG) | .id'
+          })"
+          [[ "$release_id" =~ ^[0-9]+$ ]]
+
+          asset_rows="$({
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
+              --jq '.[] | [.id, .name] | @tsv'
+          })"
+          [[ -n "$asset_rows" ]]
+
           mkdir downloaded
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir downloaded
+          while IFS=$'\t' read -r asset_id asset_name; do
+            [[ "$asset_id" =~ ^[0-9]+$ ]]
+            [[ "$asset_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+            [[ ! -e "downloaded/$asset_name" ]]
+            gh api \
+              -H "Accept: application/octet-stream" \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+              > "downloaded/$asset_name"
+          done <<< "$asset_rows"
       - name: Enforce exact release asset allow-list
         run: node source/scripts/ci/check-release-assets.mjs "$GITHUB_WORKSPACE/downloaded" --require-all
       - name: Install locked source dependencies without lifecycle scripts

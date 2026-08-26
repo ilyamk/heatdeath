@@ -95,6 +95,16 @@ const reproducibleWorkflow = fs.readFileSync(
 assert.doesNotMatch(reproducibleWorkflow, /^\s+paths:/m,
   "a required reproducibility check must run for every pull request");
 
+const releaseVerifyWorkflow = fs.readFileSync(
+  path.join(workflowDirectory, "release-verify.yml"), "utf8");
+assert.doesNotMatch(releaseVerifyWorkflow, /\bgh release download\b/,
+  "draft assets cannot be resolved through the public release-by-tag endpoint");
+assert.match(
+  releaseVerifyWorkflow,
+  /releases\/assets\/\$\{asset_id\}/,
+  "draft assets must be downloaded through their authenticated asset IDs",
+);
+
 const trackedKeys = files.filter((name) =>
   /(?:^|\/)(?:keys?|secrets?)(?:\/|$)/i.test(name) && !/\.pub\.pem$/.test(name));
 assert.deepEqual(trackedKeys, [], "key directories may contain tracked public .pub.pem files only");
