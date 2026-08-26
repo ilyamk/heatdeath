@@ -207,7 +207,7 @@ meets the listed requirements more completely than the other projects reviewed.
 - [Foundry — `cast wallet new-mnemonic`, a generator inside the toolchain](https://github.com/foundry-rs/foundry)
 - [bip_utils — a widely used Python BIP-39/32/44 library](https://github.com/ebellocchia/bip_utils)
 - [Milk Sad (CVE-2023-39910) — analysis of the weak PRNG in libbitcoin-explorer](https://milksad.info/)
-- [Analysis of the Profanity exploit — a 32-bit seed and a ~$160M loss](https://www.certik.com/resources/blog/1NHvPnvRcU4Vm1cS8x2fVJ-profanity-address-generator-exploit)
+- [Profanity — the original 1inch disclosure: a 32-bit seed and a ~$160M loss](https://blog.1inch.io/a-vulnerability-disclosed-in-profanity-an-ethereum-vanity-address-tool/)
 
 ---
 

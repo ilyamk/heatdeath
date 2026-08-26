@@ -5,14 +5,14 @@
 An offline generator of recovery phrases and EVM keys that **proves** its
 properties instead of claiming them.
 
-One readable 276 KB file - a built bundle with no runtime dependencies
+One readable 300 KB file - a built bundle with no runtime dependencies
 (the source tree has five, all by the same author). Generates a 24-word BIP-39
 phrase from 256 bits of entropy and derives Ethereum addresses. Compatible with
 MetaMask, Rabby, Trust, Ledger, Rainbow — with anything that understands BIP-39.
 
 ```sh
 npm ci --ignore-scripts
-npm run self-test        # 16 groups of checks, including negative ones
+npm run self-test        # 21 groups of checks, including negative ones
 npm run prove-sandbox    # the runtime denies network, process spawning and writes
 npm run generate:dice    # generation
 npm run verify           # check what you wrote down on paper
@@ -399,7 +399,7 @@ In short: a GUI breaks three properties that in this project are the only ones
 | **The sandbox** | Electron needs subprocesses, workers, disk writes and network — exactly what `--permission` forbids. You cannot lift that selectively: `6/6 denied` would turn into `0/6`. |
 | **The runtime** | A webview is a browser. We argue our advantage over iancoleman/bip39 on the grounds that we do not run in a browser; a GUI would turn that argument against us. |
 
-The price in numbers: right now it is **5 packages, 3.6 MB, all from one author**,
+The price in numbers: right now it is **5 packages, about 2.9 MB, all from one author**,
 and `@scure/bip39` among them has passed a Cure53 audit. A minimal GUI brings in a
 tree orders of magnitude larger, where nobody has reviewed anything.
 

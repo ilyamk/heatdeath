@@ -95,7 +95,7 @@ Not features. Checks you can run yourself, right now.
 ### 1 · Get it and check it — while still online
 
 ```sh
-git clone <this-repo> && cd evm-seed-generation-tool
+git clone https://github.com/ilyamk/heatdeath.git && cd heatdeath
 npm ci --ignore-scripts        # exact lockfile, no install scripts
 npm run self-test              # must end: Self-test OK
 npm run prove-guard            # must end: 6/6 capability probes denied

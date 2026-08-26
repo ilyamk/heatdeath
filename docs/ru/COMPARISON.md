@@ -204,7 +204,7 @@ Coldcard — самый показательный. Закрытая проши�
 - [Foundry — `cast wallet new-mnemonic`, генератор в составе тулчейна](https://github.com/foundry-rs/foundry)
 - [bip_utils — широко используемая Python-библиотека BIP-39/32/44](https://github.com/ebellocchia/bip_utils)
 - [Milk Sad (CVE-2023-39910) — разбор слабого ГПСЧ в libbitcoin-explorer](https://milksad.info/)
-- [Разбор эксплуатации Profanity — 32-битное зерно и потеря ~160 млн долларов](https://www.certik.com/resources/blog/1NHvPnvRcU4Vm1cS8x2fVJ-profanity-address-generator-exploit)
+- [Profanity — исходное раскрытие от 1inch: 32-битное зерно и потеря ~160 млн долларов](https://blog.1inch.io/a-vulnerability-disclosed-in-profanity-an-ethereum-vanity-address-tool/)
 
 ---
 

@@ -271,8 +271,8 @@ GPU-ферма (оценка, x1000): ~190 000 попыток/с
 **MetaMask не поддерживает BIP-39 passphrase.** Если вы её задали, импорт этих
 24 слов в MetaMask откроет **пустой** кошелёк без passphrase — и это выглядит
 ровно как кража средств.
-Источник: [обсуждение в сообществе MetaMask](https://community.metamask.io/t/does-metamask-support-bip39-passphrases-i-e-13th-or-25th-word/4313),
-[разбор механики](https://blofin.com/en/academy/education/bip39-passphrase-25th-word).
+Источник: [обсуждение в сообществе MetaMask](https://community.metamask.io/t/feature-request-flexible-hd-derivation-path-optional-bip39-passphrase-support/31048),
+[разбор механики](https://trezor.io/learn/a/passphrases-and-hidden-wallets).
 
 Поддерживают: Ledger, Trezor, Rabby, MyEtherWallet.
 
@@ -299,7 +299,7 @@ GPU-ферма (оценка, x1000): ~190 000 попыток/с
 - [RFC 8018 (PKCS #5 v2.1) — определение PBKDF2](https://www.rfc-editor.org/rfc/rfc8018)
 - [NIST SP 800-90B — оценка источников энтропии, min-entropy, health-тесты](https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-90B.pdf)
 - [Landauer R. «Irreversibility and Heat Generation in the Computing Process», IBM J. Res. Dev. 5(3), 1961 — происхождение предела `kT·ln2`](https://ieeexplore.ieee.org/document/5392446)
-- [Landauer R. «Information is Physical», Physics Today 44(5), 23 (1991)](https://physicstoday.scitation.org/doi/10.1063/1.881299)
+- [Landauer R. «Information is Physical», Physics Today 44(5), 23 (1991)](https://doi.org/10.1063/1.881299)
 - [Grover L. «A fast quantum mechanical algorithm for database search», 1996 — квадратичное ускорение поиска](https://arxiv.org/abs/quant-ph/9605043)
 - [Shor P. «Polynomial-Time Algorithms for Prime Factorization and Discrete Logarithms», 1995 — почему ECDLP падает целиком](https://arxiv.org/abs/quant-ph/9508027)
 - [FIPS 204 — ML-DSA, постквантовая подпись на решётках](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.204.pdf)
