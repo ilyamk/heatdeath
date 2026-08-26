@@ -18,6 +18,7 @@
     "test": "node --test",
     "test:contracts": "node scripts/ci/check-repository.mjs && node scripts/ci/check-docs.mjs",
     "test:dependency-compat": "./scripts/ci/dependency-compat.sh",
+    "test:fuzz": "node --test test/property-fuzz.test.mjs",
     "test:slow": "HEATDEATH_SLOW=1 node --test test/slow-crypto.mjs",
     "test:reproducible": "./scripts/ci/reproducible-bundle.sh",
     "self-test": "node build/run-source.mjs -- --self-test",
@@ -73,6 +74,7 @@
     "@scure/bip39": "2.3.0"
   },
   "devDependencies": {
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "fast-check": "4.9.0"
   }
 }
