@@ -4,6 +4,7 @@
 import assert4 from "node:assert/strict";
 import os from "node:os";
 import fs from "node:fs";
+import path from "node:path";
 import process2 from "node:process";
 import {
   createHash as createHash2,
@@ -3585,14 +3586,14 @@ var HDKey = class _HDKey {
     }
     this.pubHash = hash160(this._publicKey);
   }
-  derive(path) {
-    if (!/^[mM]'?/.test(path)) {
+  derive(path2) {
+    if (!/^[mM]'?/.test(path2)) {
       throw new Error('Path must start with "m" or "M"');
     }
-    if (/^[mM]'?$/.test(path)) {
+    if (/^[mM]'?$/.test(path2)) {
       return this;
     }
-    const parts = path.replace(/^[mM]'?\//, "").split("/");
+    const parts = path2.replace(/^[mM]'?\//, "").split("/");
     let child = this;
     for (const c of parts) {
       const m = /^(\d+)('?)$/.exec(c);
@@ -8219,9 +8220,9 @@ function xorInto(target, source) {
 function equalBytes(a, b) {
   return a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
-function parsePath(path) {
-  const parts = path.split("/");
-  assert4.equal(parts[0], "m", `Path must start with "m": ${path}`);
+function parsePath(path2) {
+  const parts = path2.split("/");
+  assert4.equal(parts[0], "m", `Path must start with "m": ${path2}`);
   return parts.slice(1).map((part) => {
     const hardened = /['hH]$/.test(part);
     const raw = hardened ? part.slice(0, -1) : part;
@@ -8366,13 +8367,13 @@ function primaryAccounts(seed, scheme, count) {
   const nodes = [];
   const accounts = [];
   for (let index = 0; index < count; index += 1) {
-    const path = pathFor(scheme, index);
-    const node = master.derive(path);
-    assert4.ok(node.privateKey, `No private key at ${path}`);
+    const path2 = pathFor(scheme, index);
+    const node = master.derive(path2);
+    assert4.ok(node.privateKey, `No private key at ${path2}`);
     nodes.push(node);
     accounts.push({
       index,
-      path,
+      path: path2,
       privateKey: Buffer.from(node.privateKey),
       ...addressFromPrivateKey(node.privateKey)
     });
@@ -8430,9 +8431,9 @@ function refCkdPriv(node, index) {
   data.fill(0);
   return { k, c: I.subarray(32) };
 }
-function refDerive(seed, path) {
+function refDerive(seed, path2) {
   let node = refMaster(seed);
-  for (const index of parsePath(path)) node = refCkdPriv(node, index);
+  for (const index of parsePath(path2)) node = refCkdPriv(node, index);
   return bigToBytes32(node.k);
 }
 function refFingerprint(seed) {
@@ -9050,7 +9051,12 @@ async function proveSandbox() {
     const wt = await import("node:worker_threads");
     new wt.Worker("", { eval: true });
   });
-  await probe("file write", () => fs.writeFileSync("/tmp/heatdeath-sandbox-probe", "x"));
+  await probe("file write", () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "heatdeath-capability-probe-")
+    );
+    fs.rmdirSync(directory);
+  });
   await probe("read outside the package", () => fs.readFileSync(`${os.homedir()}/.ssh/id_rsa`));
   for (const row of rows) {
     process2.stdout.write(

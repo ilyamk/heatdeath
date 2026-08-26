@@ -114,7 +114,7 @@ test("SPDX validation requires exact lockfile-backed dependency identities", () 
   const pkg = (name, version, id) => ({
     name, versionInfo: version, SPDXID: id,
     externalRefs: [{ referenceType: "purl",
-      referenceLocator: `pkg:npm/${encodeURIComponent(name).replace("%2F", "/")}@${version}` }],
+      referenceLocator: `pkg:npm/${encodeURIComponent(name).replaceAll("%2F", "/")}@${version}` }],
   });
   const sbom = {
     spdxVersion: "SPDX-2.3", dataLicense: "CC0-1.0",

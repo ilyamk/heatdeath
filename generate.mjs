@@ -40,6 +40,7 @@
 import assert from "node:assert/strict";
 import os from "node:os";
 import fs from "node:fs";
+import path from "node:path";
 import process from "node:process";
 import {
   createHash,
@@ -1311,8 +1312,12 @@ async function proveSandbox() {
     const wt = await import("node:worker_threads");
     new wt.Worker("", { eval: true });
   });
-  await probe("file write", () =>
-    fs.writeFileSync("/tmp/heatdeath-sandbox-probe", "x"));
+  await probe("file write", () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "heatdeath-capability-probe-"),
+    );
+    fs.rmdirSync(directory);
+  });
   await probe("read outside the package", () =>
     fs.readFileSync(`${os.homedir()}/.ssh/id_rsa`));
 

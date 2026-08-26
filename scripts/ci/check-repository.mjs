@@ -41,11 +41,24 @@ const files = execFileSync(
 const privateMaterial = [];
 for (const relative of files) {
   const absolute = path.join(ROOT, relative);
-  const stat = fs.lstatSync(absolute);
-  if (!stat.isFile() || stat.size > 4 * 1024 * 1024) continue;
-  const bytes = fs.readFileSync(absolute);
-  if (/-----BEGIN (?:ENCRYPTED )?PRIVATE KEY-----/.test(bytes.toString("utf8"))) {
-    privateMaterial.push(relative);
+  let descriptor;
+  try {
+    descriptor = fs.openSync(
+      absolute, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    if (error.code === "ELOOP") continue;
+    throw error;
+  }
+  try {
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile() || stat.size > 4 * 1024 * 1024) continue;
+    const bytes = fs.readFileSync(descriptor);
+    if (/-----BEGIN (?:ENCRYPTED )?PRIVATE KEY-----/.test(bytes.toString("utf8"))) {
+      privateMaterial.push(relative);
+    }
+  } finally {
+    fs.closeSync(descriptor);
   }
 }
 assert.deepEqual(privateMaterial, [], "private signing material must never be tracked");

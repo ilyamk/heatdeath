@@ -59,15 +59,26 @@ function absoluteExternalPath(value, option) {
 
 function existingExternalFile(value, option) {
   const lexical = absoluteExternalPath(value, option);
-  const stat = fs.lstatSync(lexical);
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw new Error("private key must be a real file");
+  let descriptor;
+  try {
+    descriptor = fs.openSync(
+      lexical, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+    const stat = fs.fstatSync(descriptor);
+    if (!stat.isFile()) throw new Error("private key must be a real file");
+    const canonical = fs.realpathSync(lexical);
+    const canonicalStat = fs.statSync(canonical);
+    if (canonicalStat.dev !== stat.dev || canonicalStat.ino !== stat.ino) {
+      throw new Error("private key changed while it was being opened");
+    }
+    if (canonical === ROOT_REAL || canonical.startsWith(`${ROOT_REAL}${path.sep}`)) {
+      throw new Error(`${option} must resolve outside the repository`);
+    }
+    return { descriptor, stat };
+  } catch (error) {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    throw error;
   }
-  const canonical = fs.realpathSync(lexical);
-  if (canonical === ROOT_REAL || canonical.startsWith(`${ROOT_REAL}${path.sep}`)) {
-    throw new Error(`${option} must resolve outside the repository`);
-  }
-  return { path: canonical, stat: fs.statSync(canonical) };
 }
 
 function fingerprint(publicKey) {
@@ -93,23 +104,29 @@ if (action === "init-signing-key") {
   process.stdout.write(`${scheme} key created at ${output}\npublic fingerprint ${fingerprint(publicKey)}\n`);
 } else if (action === "sign-release") {
   const externalKey = existingExternalFile(args.get("--key"), "--key");
-  const keyPath = externalKey.path;
   const stat = externalKey.stat;
-  if ((stat.mode & 0o077) !== 0) throw new Error("private key permissions must be 0600 or stricter");
-  const privateKey = fs.readFileSync(keyPath);
-  const derived = createPublicKey(privateKey);
-  const tracked = createPublicKey(fs.readFileSync(path.join(DIST, `${scheme}.pub.pem`)));
-  if (fingerprint(tracked) !== PINNED_RELEASE_FINGERPRINTS.get(scheme)) {
-    throw new Error(`tracked ${scheme} public key is not the pinned release identity`);
+  let privateKey;
+  try {
+    if ((stat.mode & 0o077) !== 0) {
+      throw new Error("private key permissions must be 0600 or stricter");
+    }
+    privateKey = fs.readFileSync(externalKey.descriptor);
+    const derived = createPublicKey(privateKey);
+    const tracked = createPublicKey(fs.readFileSync(path.join(DIST, `${scheme}.pub.pem`)));
+    if (fingerprint(tracked) !== PINNED_RELEASE_FINGERPRINTS.get(scheme)) {
+      throw new Error(`tracked ${scheme} public key is not the pinned release identity`);
+    }
+    if (fingerprint(derived) !== fingerprint(tracked)) {
+      throw new Error(`private key does not match tracked ${scheme} release identity`);
+    }
+    const manifest = fs.readFileSync(path.join(DIST, "SHA256SUMS"));
+    const signature = sign(null, manifest, privateKey);
+    fs.writeFileSync(path.join(DIST, `SHA256SUMS.${scheme}.sig`), signature);
+    process.stdout.write(`${scheme} signed SHA256SUMS (${signature.length} bytes)\n`);
+  } finally {
+    privateKey?.fill(0);
+    fs.closeSync(externalKey.descriptor);
   }
-  if (fingerprint(derived) !== fingerprint(tracked)) {
-    throw new Error(`private key does not match tracked ${scheme} release identity`);
-  }
-  const manifest = fs.readFileSync(path.join(DIST, "SHA256SUMS"));
-  const signature = sign(null, manifest, privateKey);
-  fs.writeFileSync(path.join(DIST, `SHA256SUMS.${scheme}.sig`), signature);
-  privateKey.fill(0);
-  process.stdout.write(`${scheme} signed SHA256SUMS (${signature.length} bytes)\n`);
 } else {
   throw new Error(
     "usage: sign.mjs init-signing-key --scheme=ID --out=/external/key.pem\n" +

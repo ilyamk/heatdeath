@@ -112,7 +112,7 @@ export function validateSpdxSbom(sbom, { packageJson, packageLock }) {
     if (seenPackages.has(identity) || spdxIds.has(pkg.SPDXID)) {
       throw new Error(`SBOM contains a duplicate package identity: ${identity}`);
     }
-    const expectedPurl = `pkg:npm/${encodeURIComponent(pkg.name).replace("%2F", "/")}@${pkg.versionInfo}`;
+    const expectedPurl = `pkg:npm/${encodeURIComponent(pkg.name).replaceAll("%2F", "/")}@${pkg.versionInfo}`;
     const hasPurl = pkg.externalRefs?.some((reference) =>
       reference.referenceType === "purl" && reference.referenceLocator === expectedPurl);
     if (!hasPurl) throw new Error(`SBOM package has no exact npm purl: ${identity}`);
