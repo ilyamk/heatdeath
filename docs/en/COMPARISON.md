@@ -38,7 +38,7 @@ unverified turns into the confident is the place where people lose money.
 | Vectors **at runtime, before any secret** | **yes** | no | no | no | no | no | no |
 | Second independent implementation | **yes** | no | no | no | no | no | no |
 | Wordlist SHA-256 check | **yes** | no | no | no | no | no | no |
-| Runtime sandbox | **yes, 6/6** | no | no | no | no | no | no |
+| Trusted-code capability guard | **yes, 6/6** | no | no | no | no | no | no |
 | Environment checks (SSH, debugger) | **yes** | no | no | no | no | no | no |
 | Entropy health tests | **yes** | no | no | no | no | no | no |
 | Dice | **yes, ≥128** | yes [unconf.] | no | no | no | no | no |
