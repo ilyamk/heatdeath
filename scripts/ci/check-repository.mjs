@@ -104,6 +104,11 @@ assert.match(
   /releases\/assets\/\$\{asset_id\}/,
   "draft assets must be downloaded through their authenticated asset IDs",
 );
+assert.match(
+  releaseVerifyWorkflow,
+  /permissions: \{\}[\s\S]*?fetch:[\s\S]*?permissions:\n\s+contents: write[\s\S]*?verify:[\s\S]*?permissions:\n\s+contents: read/,
+  "draft write access must be isolated from the read-only verification job",
+);
 
 const trackedKeys = files.filter((name) =>
   /(?:^|\/)(?:keys?|secrets?)(?:\/|$)/i.test(name) && !/\.pub\.pem$/.test(name));
