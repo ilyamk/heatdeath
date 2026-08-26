@@ -57,23 +57,27 @@ function absoluteExternalPath(value, option) {
   return resolved;
 }
 
-function existingExternalFile(value, option) {
+function canonicalExternalTarget(value, option) {
   const lexical = absoluteExternalPath(value, option);
+  const canonicalParent = fs.realpathSync(path.dirname(lexical));
+  if (
+    canonicalParent === ROOT_REAL ||
+    canonicalParent.startsWith(`${ROOT_REAL}${path.sep}`)
+  ) {
+    throw new Error(`${option} must resolve outside the repository`);
+  }
+  return path.join(canonicalParent, path.basename(lexical));
+}
+
+function existingExternalFile(value, option) {
+  const canonical = canonicalExternalTarget(value, option);
   let descriptor;
   try {
     descriptor = fs.openSync(
-      lexical, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+      canonical, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
     );
     const stat = fs.fstatSync(descriptor);
     if (!stat.isFile()) throw new Error("private key must be a real file");
-    const canonical = fs.realpathSync(lexical);
-    const canonicalStat = fs.statSync(canonical);
-    if (canonicalStat.dev !== stat.dev || canonicalStat.ino !== stat.ino) {
-      throw new Error("private key changed while it was being opened");
-    }
-    if (canonical === ROOT_REAL || canonical.startsWith(`${ROOT_REAL}${path.sep}`)) {
-      throw new Error(`${option} must resolve outside the repository`);
-    }
     return { descriptor, stat };
   } catch (error) {
     if (descriptor !== undefined) fs.closeSync(descriptor);
@@ -87,20 +91,17 @@ function fingerprint(publicKey) {
 }
 
 if (action === "init-signing-key") {
-  const output = absoluteExternalPath(args.get("--out"), "--out");
-  if (fs.existsSync(output)) throw new Error(`refusing to overwrite ${output}`);
-  const parentStat = fs.lstatSync(path.dirname(output));
-  if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) {
-    throw new Error("key parent must be a real directory, not a symlink");
-  }
-  if (fs.realpathSync(path.dirname(output)) !== path.dirname(output)) {
-    throw new Error("key parent path must not traverse symlinks");
-  }
+  const output = canonicalExternalTarget(args.get("--out"), "--out");
   const { publicKey, privateKey } = generateKeyPairSync(algorithm);
-  fs.writeFileSync(output, privateKey.export({ type: "pkcs8", format: "pem" }), {
-    mode: 0o600,
-    flag: "wx",
-  });
+  try {
+    fs.writeFileSync(output, privateKey.export({ type: "pkcs8", format: "pem" }), {
+      mode: 0o600,
+      flag: "wx",
+    });
+  } catch (error) {
+    if (error.code === "EEXIST") throw new Error(`refusing to overwrite ${output}`);
+    throw error;
+  }
   process.stdout.write(`${scheme} key created at ${output}\npublic fingerprint ${fingerprint(publicKey)}\n`);
 } else if (action === "sign-release") {
   const externalKey = existingExternalFile(args.get("--key"), "--key");
