@@ -109,6 +109,8 @@ assert.match(
   /permissions: \{\}[\s\S]*?fetch:[\s\S]*?permissions:\n\s+contents: write[\s\S]*?verify:[\s\S]*?permissions:\n\s+contents: read/,
   "draft write access must be isolated from the read-only verification job",
 );
+assert.match(releaseVerifyWorkflow, /chmod 0755 downloaded\/heatdeath/,
+  "release transport must restore the verified SEA executable mode");
 
 const trackedKeys = files.filter((name) =>
   /(?:^|\/)(?:keys?|secrets?)(?:\/|$)/i.test(name) && !/\.pub\.pem$/.test(name));

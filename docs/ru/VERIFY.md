@@ -51,6 +51,13 @@ npm run verify-release -- --trusted-keys=/absolute/independent/key-directory
 provenance и рецепт сборки обязательны; большой SEA опционален, если не указан
 `--require-all`.
 
+Скачивание GitHub Release не сохраняет Unix-бит исполнения SEA. Восстановите эти
+локальные метаданные только после успешной проверки:
+
+```sh
+chmod 0755 ./dist/heatdeath
+```
+
 Ожидаемый результат:
 
 ```

@@ -143,6 +143,8 @@ jobs:
           done
       - name: Verify SEA code signature and capability guard
         run: |
+          test -x source/dist/heatdeath
+          chmod 0755 downloaded/heatdeath
           codesign --verify --deep --strict downloaded/heatdeath
           downloaded/heatdeath --self-test
           downloaded/heatdeath --prove-guard
