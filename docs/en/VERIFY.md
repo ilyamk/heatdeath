@@ -52,6 +52,13 @@ malformed hashes are fatal. The bundle, deterministic source archive, provenance
 record and build recipe are mandatory; only the large SEA is optional unless
 `--require-all` is set.
 
+GitHub Release downloads do not preserve the SEA's Unix executable mode. Restore
+that local metadata only after verification:
+
+```sh
+chmod 0755 ./dist/heatdeath
+```
+
 Expected:
 
 ```
