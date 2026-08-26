@@ -162,7 +162,8 @@ prefer the control.
 A separate local directory, **not** synced with iCloud, Dropbox or Google Drive.
 
 ```sh
-cd evm-seed-generation-tool
+git clone https://github.com/ilyamk/heatdeath.git
+cd heatdeath
 rm -rf node_modules
 npm ci --ignore-scripts
 npm audit --omit=dev

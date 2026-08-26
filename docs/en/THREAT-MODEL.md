@@ -122,6 +122,10 @@ encrypted with keys the hypervisor does not hold, and SEV-SNP catches page
 substitution through a Reverse Map Table. TDX removes the hypervisor from the
 trusted base entirely.
 
+- [AMD SEV-SNP: A Confidential Computing Primer](https://arxiv.org/html/2608.04039v1)
+- [Azure confidential VM FAQ](https://learn.microsoft.com/en-us/azure/confidential-computing/confidential-vm-faq)
+- [An overview of SEV-SNP and Intel TDX](https://sys.cs.fau.de/extern/lehre/ws22/akss/material/amd-sev-intel-tdx.pdf)
+
 Two reasons this is not the answer:
 
 **1. These are x86 technologies.** They do not exist on Apple Silicon — `sysctl`

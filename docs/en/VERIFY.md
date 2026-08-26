@@ -24,7 +24,7 @@
 
 1. **Readable source** — `generate.mjs` and `slip39.mjs`. Maximum trust: you read
    what executes.
-2. **The bundle** `dist/heatdeath.mjs` — 276 KB, no dependencies, human-readable,
+2. **The bundle** `dist/heatdeath.mjs` — 300 KB, no dependencies, human-readable,
    byte-for-byte reproducible.
 3. **The binary** `dist/heatdeath` — 144 MB. Convenience only. Treat it as
    unverified until you have reproduced its SHA-256 yourself.
