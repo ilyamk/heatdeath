@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # 24.8 is the real minimum: SLH-DSA landed after Node 24.0.
+        # Floating majors validate current supported patches; release builds
+        # use the separately pinned exact runtime.
+        node: [24.8.0, 24, 25, 26]
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use Node.js ${{ matrix.node }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - name: Record resolved toolchain
+        run: node --version && npm --version
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Unit and adversarial tests
+        run: npm test
+      - name: Checkout-command known-answer tests
+        run: npm run self-test
+      - name: Build and self-test standalone bundle
+        run: npm run build
+
+  contracts:
+    name: Repository and documentation contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use release Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version-release
+      - run: npm run test:contracts
+
+  external-oracles:
+    name: Independent EVM, QR and SLIP-39 oracles
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use release Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version-release
+      - name: Use pinned Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13.7"
+          cache: pip
+          cache-dependency-path: test/requirements-oracle.txt
+      - run: npm ci --ignore-scripts
+      - name: Install hash-locked Python oracles
+        run: python -m pip install --require-hashes -r test/requirements-oracle.txt
+      - run: python test/qr_oracle.py
+      - run: python test/slip39_oracle.py
+      - name: Install pinned Foundry oracle
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            --output /tmp/foundry.tar.gz \
+            https://github.com/foundry-rs/foundry/releases/download/v1.7.1/foundry_v1.7.1_linux_amd64.tar.gz
+          echo 'cf7e688ed0c4c48adffca788b496076e31060b67ac5afe1e43dbb5499c20c88b  /tmp/foundry.tar.gz' | sha256sum -c -
+          mkdir /tmp/foundry-bin
+          tar -xzf /tmp/foundry.tar.gz -C /tmp/foundry-bin cast
+          echo /tmp/foundry-bin >> "$GITHUB_PATH"
+      - run: ./test/foundry-oracle.sh
+
+  macos-release-runtime:
+    name: macOS arm64 release-runtime smoke test
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use exact release Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version-release
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run build
+      - name: Prove bundle capability guard
+        run: node --permission --allow-fs-read=/dev/urandom dist/heatdeath.mjs --prove-guard

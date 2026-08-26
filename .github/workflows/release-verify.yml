@@ -1,0 +1,105 @@
+name: Verify release assets
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft or published release tag to verify
+        required: true
+        type: string
+
+concurrency:
+  group: verify-release-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Signatures, rebuild and runtime proof
+    runs-on: macos-26
+    timeout-minutes: 40
+    environment: release-verification
+    steps:
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-$EVENT_TAG}"
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Checkout exact tag without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.release.outputs.tag }}
+          path: source
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Use exact release Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: source/.node-version-release
+          package-manager-cache: false
+      - name: Verify the npm bundled with the pinned Node.js release
+        run: test "$(npm --version)" = "11.19.0"
+      - name: Download release assets, including drafts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir downloaded
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir downloaded
+      - name: Enforce exact release asset allow-list
+        run: node source/scripts/ci/check-release-assets.mjs "$GITHUB_WORKSPACE/downloaded" --require-all
+      - name: Install locked source dependencies without lifecycle scripts
+        working-directory: source
+        run: npm ci --ignore-scripts
+      - name: Verify three signatures, manifest, SBOM and provenance
+        run: >-
+          node source/build/verify-release.mjs
+          --dist="$GITHUB_WORKSPACE/downloaded"
+          --trusted-keys="$GITHUB_WORKSPACE/source/dist"
+          --require-all
+      - name: Compare distributed public identities with independently pinned source
+        shell: bash
+        run: |
+          set -euo pipefail
+          for scheme in ed25519 ml-dsa-87 slh-dsa-sha2-128s; do
+            cmp "downloaded/$scheme.pub.pem" "source/dist/$scheme.pub.pem"
+          done
+      - name: Rebuild exact tagged release independently
+        working-directory: source
+        run: npm run build:release
+      - name: Compare every reproducible release byte
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#v}"
+          for name in \
+            heatdeath.mjs heatdeath \
+            "heatdeath-v${version}-source.tar.gz" \
+            "heatdeath-v${version}.spdx.json" \
+            SOURCE-PROVENANCE.json BUILD-RECIPE.txt SHA256SUMS; do
+            cmp "downloaded/$name" "source/dist/$name"
+          done
+      - name: Verify SEA code signature and capability guard
+        run: |
+          codesign --verify --deep --strict downloaded/heatdeath
+          downloaded/heatdeath --self-test
+          downloaded/heatdeath --prove-guard
+      - name: Verify GitHub build attestation
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh attestation verify downloaded/heatdeath --repo "$GITHUB_REPOSITORY"

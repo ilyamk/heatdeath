@@ -1,0 +1,14 @@
+# Security-sensitive source and release trust roots. CODEOWNERS is useful even
+# for a one-maintainer repository as an explicit review map; rules must not
+# require an unavailable second reviewer until one is appointed.
+/.github/ @ilyamk
+/build/ @ilyamk
+/generate.mjs @ilyamk
+/slip39.mjs @ilyamk
+/qr.mjs @ilyamk
+/terminal.mjs @ilyamk
+/op-transport.mjs @ilyamk
+/package.json @ilyamk
+/package-lock.json @ilyamk
+/dist/*.pub.pem @ilyamk
+/SECURITY.md @ilyamk
