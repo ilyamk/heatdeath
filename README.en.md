@@ -88,6 +88,7 @@ documentation assigns the same role to a second tool.
 | [docs/en/COMPARISON.md](docs/en/COMPARISON.md) | The full comparison with open-source projects |
 | [docs/en/VERIFY.md](docs/en/VERIFY.md) | Verifying the signatures and reproducing the build |
 | [docs/en/BUILD.md](docs/en/BUILD.md) | Building it yourself |
+| [docs/en/RELEASE.md](docs/en/RELEASE.md) | Maintainer release and offline-signing ceremony |
 | [docs/en/GLOSSARY.md](docs/en/GLOSSARY.md) | Every specialist term used across these documents, each pointing at the document that explains it |
 
 The same documents in Russian live in [docs/ru/](docs/ru/); the two trees mirror
@@ -110,6 +111,11 @@ npm run prove-sandbox    show the runtime refusals
 npm run build            reproducible build of the artifacts
 npm run verify-release   verify the hashes and the three signatures
 ```
+
+These commands execute the current source checkout and therefore print an
+unsigned-source warning. A complete downloaded release can instead be run with
+the corresponding `:verified` command, for example `npm run self-test:verified`;
+that mode never falls back to source.
 
 Options: `--dice`, `--scheme=metamask|account`, `--accounts=N`, `--shares=2of3`,
 `--group-threshold=N`, `--show-public`, `--show-private`, `--wipe-screen`, `--qr`.
@@ -548,16 +554,17 @@ author would have repeated the same mistake and agreed with itself.
 ## Integrity
 
 ```sh
-( cd dist && shasum -a 256 -c SHA256SUMS --ignore-missing )
-npm run verify-release
+npm run build
+npm run verify-release -- --trusted-keys=/absolute/independent/key-directory
+npm run self-test:verified
 ```
 
-The 144 MB single executable is not committed to the repository; it is attached to
-the release. In a fresh clone only `heatdeath.mjs` is present, which is why the check
-runs with `--ignore-missing`. That flag makes the exit code alone untrustworthy — an
-empty `dist/` would also succeed — so read the output and confirm it says
-`heatdeath.mjs: OK`. After downloading the binary into `dist/`, run the command
-without the flag and require both artifacts to report `OK`.
+`verify-release` is intentionally a check of a complete downloaded release, not of
+an arbitrary source checkout. It requires the bundle, deterministic source archive,
+SBOM, provenance, recipe and all three signatures; the SEA is optional unless
+`--require-all` is supplied. Normal commands execute reviewed checkout source and
+warn accordingly. `:verified` commands require this release preflight and never
+fall back to unsigned source.
 
 The manifest is signed with three schemes resting on three different hardness
 assumptions: **Ed25519**, **ML-DSA-87** (FIPS 204, lattices) and

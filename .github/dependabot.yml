@@ -1,0 +1,37 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    versioning-strategy: increase
+    cooldown:
+      default-days: 7
+    groups:
+      noble-scure-crypto:
+        patterns:
+          - "@noble/*"
+          - "@scure/*"
+      build-tooling:
+        dependency-type: development
+    labels:
+      - dependencies
+      - security-review-required
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:30"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
+    labels:
+      - dependencies
+      - ci

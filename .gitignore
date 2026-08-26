@@ -1,7 +1,8 @@
 node_modules/
 
-# Release signing keys. Leaking these lets an attacker sign a backdoored build
-# that verifies perfectly; losing them means you can no longer sign at all.
+# Legacy local signing keys remain ignored for safe migration. The v2.1 signing
+# command rejects all in-repository keys; move them manually to offline external
+# storage after verifying backups and fingerprints. Nothing moves or deletes them.
 keys/
 
 # The single executable is ~144 MB. Committing it would put that blob in git

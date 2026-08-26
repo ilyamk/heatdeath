@@ -29,8 +29,8 @@
 //      re-implements BIP-39 mnemonic encoding, PBKDF2 seed derivation and
 //      BIP-32 CKDpriv on node:crypto alone. See REFERENCE IMPLEMENTATION.
 //   3. No network, no subprocesses, no file writes. Enforced by the Node
-//      permission model when launched through the provided npm scripts, not
-//      merely asserted. See assertRuntime().
+//      permission model when launched through the provided npm scripts. This
+//      is least privilege for trusted code, not a malicious-code sandbox.
 //   4. Secrets never touch argv (visible in `ps`), never touch a file, never
 //      touch the clipboard. Interactive input is read with echo disabled.
 //
@@ -40,6 +40,7 @@
 import assert from "node:assert/strict";
 import os from "node:os";
 import fs from "node:fs";
+import path from "node:path";
 import process from "node:process";
 import {
   createHash,
@@ -47,7 +48,6 @@ import {
   pbkdf2Sync,
   randomBytes,
   timingSafeEqual,
-  webcrypto,
 } from "node:crypto";
 
 import { secp256k1 } from "@noble/curves/secp256k1.js";
@@ -64,15 +64,25 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 
 import {
   admissibleSubsets,
+  admissibleSubsetAtRank,
   combineShares,
-  countAdmissibleSubsets,
-  randomAdmissibleSubset,
+  countAdmissibleSubsetsExact,
+  randomAdmissibleRank,
   slip39SelfTest,
   splitSecretIntoShares,
 } from "./slip39.mjs";
 import SLIP39_VECTORS from "./slip39-vectors.json" with { type: "json" };
 import SLIP39_FIXTURES from "./slip39-fixtures.json" with { type: "json" };
 import { encodeAddressQRs, qrSelfTest, renderQR } from "./qr.mjs";
+import { parseCli } from "./cli.mjs";
+import {
+  ESC,
+  looksObviouslyWeakPassphrase,
+  normalizePassphrase,
+  readInput,
+  validateNewWalletPassphrase,
+} from "./terminal.mjs";
+import { sendSecretPayload } from "./op-transport.mjs";
 
 // ---------------------------------------------------------------------------
 // CONSTANTS
@@ -121,13 +131,6 @@ const PATH_SCHEMES = {
   },
 };
 const DEFAULT_SCHEME = "metamask";
-
-// Control characters, written this way so the source file itself contains no
-// literal control bytes (they are invisible in diffs and code review).
-const KEY_ETX = String.fromCharCode(3); // Ctrl+C
-const KEY_EOT = String.fromCharCode(4); // Ctrl+D
-const KEY_DEL = String.fromCharCode(127); // Backspace
-const ESC = String.fromCharCode(27);
 
 // ---------------------------------------------------------------------------
 // SMALL UTILITIES
@@ -236,7 +239,7 @@ function assertRuntime({ requireTty = true } = {}) {
 
   if (!process.permission) {
     warn.push(
-      "Node's permission model is OFF. Network, subprocesses and file writes " +
+      "Node's trusted-code capability guard is OFF. Network, subprocesses and file writes " +
         "are technically possible from this process. Prefer `npm run generate`, " +
         "which enables it.",
     );
@@ -245,6 +248,15 @@ function assertRuntime({ requireTty = true } = {}) {
       if (process.permission.has(scope)) {
         warn.push(`Permission model is enabled but "${scope}" is ALLOWED.`);
       }
+    }
+    if (process.permission.has("fs.read", process.cwd())) {
+      warn.push(
+        "Repository-wide filesystem read is allowed. This is expected only in " +
+          "source-checkout mode; signed bundle commands need /dev/urandom only.",
+      );
+    }
+    if (!process.permission.has("fs.read", "/dev/urandom")) {
+      fatal.push("The required /dev/urandom read capability is missing.");
     }
   }
 
@@ -598,24 +610,15 @@ function diceEntropy(rolls) {
  * input is unpredictable, so adding a source can never make the result weaker
  * than the best source alone.
  *
- * HONEST SCOPE ON INDEPENDENCE: crypto.randomBytes and webcrypto both draw
- * from OpenSSL's DRBG on this platform, so they are ONE source wearing two
- * hats - a broken DRBG breaks both. /dev/urandom is the kernel, a genuinely
- * different code path. Dice are the only source independent of this machine.
- * Do not read the three entries below as triple redundancy.
+ * HONEST SCOPE ON INDEPENDENCE: crypto.randomBytes is backed by OpenSSL while
+ * /dev/urandom is read directly through the kernel interface. They are two
+ * code paths, not proof of two independent physical entropy sources. Dice are
+ * the only source independent of this machine.
  */
 function collectEntropy({ dice }) {
   const PROBE = 4096;
   const providers = [
     { name: "openssl-drbg", get: (n) => randomBytes(n) },
-    {
-      name: "webcrypto",
-      get: (n) => {
-        const b = new Uint8Array(n);
-        webcrypto.getRandomValues(b);
-        return Buffer.from(b);
-      },
-    },
     { name: "kernel-urandom", get: readUrandom },
   ];
 
@@ -646,19 +649,20 @@ function collectEntropy({ dice }) {
     report.push({ name: provider.name, status: "OK" });
   }
 
-  assert.ok(
-    material.length >= 2,
-    `Only ${material.length} entropy source(s) available; refusing to generate`,
+  assert.equal(
+    material.length, providers.length,
+    `Only ${material.length}/${providers.length} required OS entropy paths ` +
+      "available; refusing to generate",
   );
 
-  // Two "independent" sources returning identical bytes is the signature of a
-  // cloned VM, a restored snapshot or a stubbed RNG. It is never chance.
+  // Identical probes prove catastrophic wiring/stubbing. Unequal probes do
+  // not prove independence and make no claim about VM snapshots or clones.
   for (let i = 0; i < probes.length; i += 1) {
     for (let j = i + 1; j < probes.length; j += 1) {
       assert.ok(
         !probes[i].probe.equals(probes[j].probe),
         `Sources "${probes[i].name}" and "${probes[j].name}" returned identical ` +
-          "bytes - this indicates a cloned/restored VM or a stubbed RNG",
+          "bytes - this indicates a catastrophic duplicate/stubbed output",
       );
     }
   }
@@ -727,65 +731,7 @@ function makeShamirRng() {
 // every process on the machine via `ps` and are recorded in shell history.
 // ---------------------------------------------------------------------------
 
-async function readInput(prompt, { echo = false } = {}) {
-  const stdin = process.stdin;
-  if (!stdin.isTTY) {
-    throw new Error("stdin is not a terminal; this command needs interactive input");
-  }
-  // Echo OFF before the prompt is printed, not after.
-  //
-  // Writing the prompt first leaves a window in which terminal echo is still
-  // on. A human cannot type into a window that small, but a PASTE lands in it
-  // whole, and so does any automation - which is how this was found: an
-  // expect-driven test had the entire recovery phrase echoed onto the screen
-  // and into scrollback. For a tool whose premise is that the secret never
-  // appears where it can be photographed or logged, that ordering was wrong.
-  const wasRaw = Boolean(stdin.isRaw);
-  stdin.setRawMode(true);
-  stdin.resume();
-  stdin.setEncoding("utf8");
-
-  process.stdout.write(prompt);
-
-  let buffer = "";
-  try {
-    await new Promise((resolve, reject) => {
-      const onData = (chunk) => {
-        for (const ch of chunk) {
-          if (ch === "\r" || ch === "\n") {
-            stdin.off("data", onData);
-            process.stdout.write("\n");
-            return resolve();
-          }
-          if (ch === KEY_ETX || ch === KEY_EOT) {
-            stdin.off("data", onData);
-            process.stdout.write("\n");
-            return reject(new Error("aborted by user"));
-          }
-          if (ch === KEY_DEL || ch === "\b") {
-            if (buffer.length > 0) {
-              buffer = buffer.slice(0, -1);
-              if (echo) process.stdout.write("\b \b");
-            }
-            continue;
-          }
-          if (ch < " ") continue; // ignore arrow keys and other control input
-          buffer += ch;
-          if (echo) process.stdout.write(ch);
-        }
-      };
-      stdin.on("data", onData);
-    });
-  } finally {
-    // Without this, a thrown error leaves the user's shell with echo disabled,
-    // where it looks hung.
-    stdin.setRawMode(wasRaw);
-    stdin.pause();
-  }
-  return buffer;
-}
-
-async function readPassphraseTwice() {
+async function readPassphraseTwice({ newWallet = false } = {}) {
   process.stdout.write(
     "\nBIP-39 passphrase (the \"25th word\").\n\n" +
       "  It is NOT a wordlist word - any text at all, case and spaces included.\n" +
@@ -807,63 +753,33 @@ async function readPassphraseTwice() {
       "  Empty = standard wallet, opens in every wallet's default import.\n" +
       "  Input is hidden. Press Enter on an empty line for no passphrase.\n\n",
   );
-  const first = await readInput("passphrase: ");
+  const firstRaw = await readInput("passphrase: ");
+  if (newWallet) validateNewWalletPassphrase(firstRaw);
+  else if (/[^\x20-\x7e]/.test(firstRaw)) {
+    process.stdout.write(
+      "\n  ! Unicode recovery mode: the text will be normalized with NFKD.\n" +
+        "  ! Confirm the resulting wallet fingerprint against your record.\n",
+    );
+  }
+  const first = normalizePassphrase(firstRaw);
   if (first === "") {
     process.stdout.write("Using an EMPTY passphrase (standard wallet).\n");
     return "";
   }
-  const second = await readInput("repeat:     ");
+  const secondRaw = await readInput("repeat:     ");
+  if (newWallet) validateNewWalletPassphrase(secondRaw);
+  const second = normalizePassphrase(secondRaw);
   // A silent typo here produces a permanently different, unrecoverable wallet.
   assert.equal(first, second, "Passphrases do not match - nothing was generated");
 
-  // Rough strength estimate, stated as the UPPER bound it is.
-  //
-  // BIP-39 stretches with 2048 PBKDF2 iterations, which is nothing. Measured
-  // on a laptop core: ~190 guesses/s, so a GPU rig is on the order of 10^5/s.
-  // At that rate a single dictionary word survives under a second. Saying so
-  // at the moment of entry is worth more than any amount of documentation.
-  const GUESS_RATE = 190_000;
-  const words = first.trim().split(/\s+/).filter(Boolean).length;
-  const classes =
-    (/[a-z]/.test(first) ? 26 : 0) + (/[A-Z]/.test(first) ? 26 : 0) +
-    (/[0-9]/.test(first) ? 10 : 0) + (/[^a-zA-Z0-9]/.test(first) ? 33 : 0);
-  // Take the better of "random characters" and "random words", then cap it:
-  // a human-chosen phrase is nowhere near either bound.
-  // Which model applies matters more than the arithmetic. For a phrase of
-  // words the entropy is per WORD, not per character - scoring
-  // "harbor tulip cactus velvet" by its 26 characters returns ~128 bits when
-  // the honest figure is 4 x 12.9 = 52. Overstating in that direction is
-  // exactly the wrong way to be wrong, so a word-shaped input is always
-  // scored per word.
-  const looksLikeWords =
-    words >= 2 && first.trim().split(/\s+/).every((w) => /^[\p{L}'-]+$/u.test(w));
-  const bits = Math.min(
-    looksLikeWords ? words * 12.9 : first.length * Math.log2(Math.max(classes, 2)),
-    128,
-  );
-  const seconds = 2 ** bits / 2 / GUESS_RATE;
-  const human =
-    seconds < 1 ? "under a second"
-      : seconds < 60 ? `${seconds.toFixed(0)} seconds`
-        : seconds < 3600 ? `${(seconds / 60).toFixed(0)} minutes`
-          : seconds < 86400 ? `${(seconds / 3600).toFixed(1)} hours`
-            : seconds < 3.15e7 ? `${(seconds / 86400).toFixed(0)} days`
-              : seconds < 3.15e10 ? `${(seconds / 3.15e7).toFixed(0)} years`
-                : `${(seconds / 3.15e7).toExponential(1)} years`;
-
-  process.stdout.write(
-    `\nPassphrase accepted and confirmed. Rough strength: ~${bits.toFixed(0)} bits\n` +
-      `(upper bound - assumes you chose randomly, which people do not).\n` +
-      `Against ~${GUESS_RATE.toLocaleString("en-US")} guesses/s by someone who ` +
-      `already has your\n24 words, that is about ${human}.\n`,
-  );
-  if (bits < 50) {
+  process.stdout.write("\nPassphrase accepted and confirmed.\n");
+  if (looksObviouslyWeakPassphrase(first)) {
     process.stdout.write(
-      "\n  ! THIS IS TOO WEAK TO BE WORTH THE RISK.\n" +
-        "  ! A passphrase this size does not protect the paper, but forgetting\n" +
-        "  ! it still loses everything. Either use 4+ random words, or use none\n" +
-        "  ! at all - the middle ground is the worst of both.\n" +
-        "  ! Ctrl+C now if you want to reconsider; nothing has been generated.\n",
+      "\n  ! This passphrase has an obvious weak structure or is short.\n" +
+        "  ! Software cannot infer how randomly a passphrase was selected and\n" +
+        "  ! therefore cannot assign it honest entropy or cracking-time numbers.\n" +
+        "  ! Use independently sampled Diceware words/random characters, or use\n" +
+        "  ! no passphrase. Ctrl+C now to reconsider.\n",
     );
   }
   return first;
@@ -1084,8 +1000,9 @@ function printShares(groupsOfShares, groups, groupThreshold) {
     : `any ${groupThreshold} of the ${groups.length} groups, at their thresholds`;
   process.stdout.write(`  To restore you need: ${need}.\n`);
   process.stdout.write(
-    "  Fewer than that reveal NOTHING - not \"less security\", literally no\n" +
-      "  information about the secret.\n",
+    "  Fewer than that cannot restore the wallet. SLIP-39's four-byte digest\n" +
+      "  leaks up to about 32 bits, so for this 256-bit secret roughly 224 bits\n" +
+      "  remain unknown: infeasible, but not a literal zero-information claim.\n",
   );
 
   groupsOfShares.forEach((shares, gi) => {
@@ -1352,9 +1269,9 @@ function selfTest({ quiet = false } = {}) {
 // ---------------------------------------------------------------------------
 
 /**
- * Demonstrate, rather than claim, that this process cannot reach the network,
- * spawn a subprocess or write a file. Every probe below must be DENIED when
- * the process is started through the npm scripts, which pass --permission.
+ * Demonstrate the Node trusted-code capability guard. This is a useful
+ * least-privilege guard against accidental access by reviewed code; Node's
+ * documentation explicitly does not define it as a malicious-code sandbox.
  *
  * This exists because "the tool is offline" is otherwise an assertion the user
  * has to take on trust. Here it is an observation they can reproduce.
@@ -1374,11 +1291,11 @@ async function proveSandbox() {
     }
   };
 
-  process.stdout.write("\nSANDBOX PROOF\n");
+  process.stdout.write("\nTRUSTED-CODE CAPABILITY GUARD\n");
   if (!process.permission) {
     process.stdout.write(
       "  x   Permission model is OFF - nothing below is enforced.\n" +
-        "      Run this through `npm run prove-sandbox`, which passes --permission.\n",
+        "      Run this through `npm run prove-guard`, which passes --permission.\n",
     );
   }
 
@@ -1395,8 +1312,12 @@ async function proveSandbox() {
     const wt = await import("node:worker_threads");
     new wt.Worker("", { eval: true });
   });
-  await probe("file write", () =>
-    fs.writeFileSync("/tmp/heatdeath-sandbox-probe", "x"));
+  await probe("file write", () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "heatdeath-capability-probe-"),
+    );
+    fs.rmdirSync(directory);
+  });
   await probe("read outside the package", () =>
     fs.readFileSync(`${os.homedir()}/.ssh/id_rsa`));
 
@@ -1419,7 +1340,10 @@ async function proveSandbox() {
     `\n${denied}/${rows.length} capability probes denied by the runtime.\n`,
   );
   process.stdout.write(
-    "\nNOTE: inside a prebuilt binary this output proves nothing. The binary\n" +
+    "\nSCOPE: this is not a malicious-code sandbox. Permission checks are a\n" +
+      "seatbelt for code whose provenance you already trust. A signed but\n" +
+      "malicious program can attack its own process and secret memory.\n\n" +
+      "NOTE: inside a prebuilt binary this output proves nothing. The binary\n" +
       "contains this source as plain text and can be patched, and a patched\n" +
       "build will happily print the same line. Self-attestation from an\n" +
       "artifact an attacker controls is circular. Trust this result only when\n" +
@@ -1427,7 +1351,7 @@ async function proveSandbox() {
       "yourself - see docs/en/VERIFY.md.\n",
   );
   if (denied !== rows.length) {
-    throw new Error("the sandbox is NOT fully enforced - see the FAIL rows above");
+    throw new Error("the capability guard is NOT fully enforced - see FAIL rows above");
   }
 }
 
@@ -1470,7 +1394,7 @@ async function generate({ showPrivate, showPublic, scheme, count, useDice, wipe,
       "ROUND-TRIP FAILED: the mnemonic does not reconstruct the generated entropy",
     );
 
-    const passphrase = await readPassphraseTwice();
+    const passphrase = await readPassphraseTwice({ newWallet: true });
     seed = mnemonicToSeedSync(phrase, passphrase);
     bundle = primaryAccounts(seed, scheme, count);
     const { accounts, fingerprint } = bundle;
@@ -1510,6 +1434,7 @@ async function generate({ showPrivate, showPublic, scheme, count, useDice, wipe,
     }
 
     printAccounts(accounts, { showPrivate, showPublic });
+    if (qr) printAddressQRs(accounts);
 
     if (!showPublic) {
       process.stdout.write(
@@ -1752,8 +1677,8 @@ async function wizard(cli) {
   process.stdout.write(
     green("  ok  ") + "known-answer vectors passed before any secret exists\n" +
       (process.permission
-        ? green("  ok  ") + "runtime sandbox active (`npm run prove-sandbox` to see it)\n"
-        : yellow("  !   ") + "permission model OFF - prefer `npm run wizard`\n"),
+        ? green("  ok  ") + "capability guard active (`npm run prove-guard` to inspect it)\n"
+        : yellow("  !   ") + "capability guard OFF - prefer signed npm commands\n"),
   );
   process.stdout.write(
     "\n" + bold("Before continuing, confirm you have:") + "\n" +
@@ -1772,7 +1697,7 @@ async function wizard(cli) {
   process.stdout.write(
     bold("Both answers give you a secure wallet. The difference is what you\n" +
          "are trusting.\n\n") +
-      `  ${bold("no")}  - 256 bits from three OS sources with health checks.\n` +
+      `  ${bold("no")}  - 256 bits from two required OS paths with health checks.\n` +
       "        Fully automatic, takes seconds. This is what most people do.\n\n" +
       `  ${bold("yes")} - the same, PLUS numbers from a real die you roll yourself,\n` +
       "        mixed in by XOR. This is a PHYSICAL die: about " +
@@ -1815,7 +1740,7 @@ async function wizard(cli) {
              "  protect the paper, still strong enough to lose the funds if you\n" +
              "  forget it.\n"),
   );
-  const passphrase = await readPassphraseTwice();
+  const passphrase = await readPassphraseTwice({ newWallet: true });
 
   step(4, TOTAL, "Generation");
   const phrase = entropyToMnemonic(entropy, wordlist);
@@ -1854,7 +1779,8 @@ async function wizard(cli) {
     process.stdout.write(
       "One piece of paper is a single point of failure, and losing it is more\n" +
         "likely than any attack. SLIP-39 splits the wallet into shares: any two\n" +
-        "of three restore it, one alone reveals nothing.\n\n" +
+        "of three restore it. One alone leaves about 224 bits unknown; the\n" +
+        "SLIP-39 digest prevents a literal zero-information claim.\n\n" +
         dim("  Shares carry the entropy, NOT your passphrase. Store them apart.\n\n"),
     );
     if (await confirm("Create 2-of-3 shares now? Type", "yes")) {
@@ -1906,13 +1832,13 @@ async function wizard(cli) {
 // be deleted as soon as the contents have been placed where they belong, and
 // the item says so in its own notes.
 //
-// THIS RELAXES THE SANDBOX, DELIBERATELY AND VISIBLY
+// THIS RELAXES THE CAPABILITY GUARD, DELIBERATELY AND VISIBLY
 // -------------------------------------------------
 // Running `op` needs --allow-child-process, so this command runs at 5/6
 // instead of 6/6 and the child is not constrained by our permission model at
 // all - it is another program with its own rights and its own network. That
 // is why this is a SEPARATE command: generation and the wizard keep the full
-// sandbox, and the boundary stays where a reader can see it.
+// stricter guard, and the boundary stays where a reader can see it.
 //
 // HOW THE SECRET REACHES `op`
 // ---------------------------
@@ -1932,7 +1858,7 @@ async function exportToOnePassword({ scheme, count, dryRun }) {
   selfTest({ quiet: true });
   process.stdout.write("\nSelf-test OK.\n");
 
-  // child_process is imported lazily: under the normal 6/6 sandbox the module
+  // child_process is imported lazily: under the normal 6/6 guard the module
   // is unreachable, and this file must still load there.
   let spawn;
   try {
@@ -2003,20 +1929,6 @@ async function exportToOnePassword({ scheme, count, dryRun }) {
    * interpolated into the command string; the payload never appears in any
    * argv at all - verified, zero occurrences under `ps`.
    */
-  const send = (vault, payload, preview) => {
-    // $1 is op's absolute path and $2 the vault, both positional so neither
-    // can be interpolated into the script. Nothing secret is ever an argument.
-    const script =
-      `exec ${CAT} | "$1" item create --vault "$2" --format=json ` +
-      `${preview ? "--dry-run " : ""}-`;
-    const child = spawn(SH, ["-c", script, "sh", opPath, vault], {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const done = collect(child);
-    child.stdin.end(payload);
-    return done;
-  };
-
   process.stdout.write("\nChecking the 1Password CLI...\n");
   const version = await run(opPath, ["--version"]);
   if (version.code !== 0) {
@@ -2088,7 +2000,7 @@ async function exportToOnePassword({ scheme, count, dryRun }) {
     process.stdout.write(
       yellow("\n  Note: generating here means the seed is born in this process,\n" +
              "  which runs at 5/6 because it may spawn `op`. Generating with\n" +
-             "  `npm run wizard` instead keeps the full 6/6 sandbox - but then\n" +
+             "  `npm run wizard` instead keeps the full 6/6 guard - but then\n" +
              "  the phrase has to be typed back in here, which is its own\n" +
              "  exposure. Neither is free; pick the one you prefer.\n"),
     );
@@ -2109,7 +2021,7 @@ async function exportToOnePassword({ scheme, count, dryRun }) {
       equalBytes(mnemonicToEntropy(phrase, wordlist), entropy),
       "ROUND-TRIP FAILED: the mnemonic does not reconstruct the generated entropy",
     );
-    passphrase = await readPassphraseTwice();
+    passphrase = await readPassphraseTwice({ newWallet: true });
     printPhrase(phrase);
     process.stdout.write(
       yellow("\n  Write this on paper NOW, before it goes into 1Password.\n") +
@@ -2215,28 +2127,29 @@ async function exportToOnePassword({ scheme, count, dryRun }) {
 
     // The ONLY channel the secret travels on. Args carry the vault name and
     // output format, nothing else.
-    const payload = JSON.stringify({ title, category: "SECURE_NOTE", fields });
-    const created = await send(vault, payload, dryRun);
+    // JSON.stringify necessarily creates one immutable JS string. Convert it
+    // immediately to a mutable buffer and erase that buffer on every path.
+    const payload = Buffer.from(
+      JSON.stringify({ title, category: "SECURE_NOTE", fields }), "utf8",
+    );
+    let created;
+    try {
+      created = await sendSecretPayload({
+        spawn, shell: SH, cat: CAT, opPath, vault, payload, preview: dryRun,
+      });
+    } finally {
+      payload.fill(0);
+    }
     if (created.code !== 0) {
-      // Show what op actually said - a failure nobody can diagnose is worse
-      // than one they can. But op could in principle echo part of the input
-      // back, so the message is withheld if it contains any secret we hold.
-      // Every value we are sending, not a hand-picked subset: a public key or
-      // an address echoed back would slip past a narrower list.
-      const secrets = fields.map((f) => f.value).filter((v) => v && v.length > 8);
-      const detail = created.err.trim().split("\n").slice(0, 3).join(" ");
-      const safe = detail && !secrets.some((x) => detail.includes(x));
       throw new Error(
-        "op item create failed" +
-          (safe ? `: ${detail}` : " (its message is withheld - it echoed input)") +
+        `op item create failed (exit ${created.code}); its stderr is withheld ` +
+          "because it handled secret input.\n" +
           "\n  Check: 1Password unlocked, and Settings > Developer >\n" +
           "  \"Integrate with 1Password CLI\" enabled. Try `op vault list`\n" +
           "  in a terminal first - it will prompt for authorisation.",
       );
     }
 
-    let itemId = null;
-    try { itemId = JSON.parse(created.out).id; } catch { /* keep null */ }
     if (dryRun) {
       process.stdout.write(
         green("\n  ok  ") + "DRY RUN succeeded - op accepted the item and wrote " +
@@ -2245,16 +2158,15 @@ async function exportToOnePassword({ scheme, count, dryRun }) {
       return;
     }
     process.stdout.write(
-      green("\n  ok  ") + `item created in vault ${vault}\n` +
-        `      title: ${title}\n` +
-        (itemId ? `      id:    ${itemId}\n` : ""),
+        green("\n  ok  ") + `item created in vault ${vault}\n` +
+        `      title: ${title}\n`,
     );
     process.stdout.write(
       "\n" + bold("NOW FINISH THE JOB:") + "\n" +
         "  1. Move the three SLIP-39 shares to three SEPARATE physical places.\n" +
         "  2. Write the 24 words on paper and verify with `npm run verify`.\n" +
         "  3. Delete this item - it is a staging buffer, not storage:\n\n" +
-        `       op item delete ${itemId ?? `"${title}"`} --vault ${vault}\n\n` +
+        `       op item delete "${title}" --vault ${vault}\n\n` +
         dim("  Until you do, your entire wallet sits in one 1Password item and\n" +
             "  is synced to their servers.\n"),
     );
@@ -2371,13 +2283,13 @@ async function split({ shareSpec, groupThreshold, scheme, count }) {
     // be a lie of exactly the kind this tool exists to avoid.
     const EXHAUSTIVE_LIMIT = 5000;
     const SAMPLE_SIZE = 500;
-    const total = countAdmissibleSubsets(groupThreshold, groups);
+    const total = countAdmissibleSubsetsExact(groupThreshold, groups);
     const check = (subset) => assert.ok(
       equalBytes(combineShares(subset, ""), entropy),
       "ROUND-TRIP FAILED: a valid subset of shares does not restore the entropy",
     );
 
-    if (total <= EXHAUSTIVE_LIMIT) {
+    if (total <= BigInt(EXHAUSTIVE_LIMIT)) {
       for (const subset of admissibleSubsets(groupThreshold, groups, shares)) {
         check(subset);
       }
@@ -2392,12 +2304,17 @@ async function split({ shareSpec, groupThreshold, scheme, count }) {
       check(
         groups.slice(0, groupThreshold).flatMap((g, gi) => shares[gi].slice(0, g.threshold)),
       );
-      for (let i = 0; i < SAMPLE_SIZE; i += 1) {
-        check(randomAdmissibleSubset(groupThreshold, groups, shares, rng));
+      const sampledRanks = new Set(["0"]); // canonical subset already checked
+      while (sampledRanks.size <= SAMPLE_SIZE) {
+        const rank = randomAdmissibleRank(total, rng);
+        const key = rank.toString();
+        if (sampledRanks.has(key)) continue;
+        sampledRanks.add(key);
+        check(admissibleSubsetAtRank(groupThreshold, groups, shares, rank));
       }
       process.stdout.write(
         `\n  ok  ${SAMPLE_SIZE + 1} of ${total.toLocaleString("en-US")} admissible ` +
-          "combinations verified (1 canonical + " + SAMPLE_SIZE + " random).\n" +
+          "combinations verified (1 canonical + " + SAMPLE_SIZE + " unique random ranks).\n" +
           "  !   Exhaustive checking was SKIPPED: this layout has too many\n" +
           "  !   combinations to enumerate. Every subset tested passed, but not\n" +
           "  !   every subset was tested. A simpler layout such as 2of3 or 3of5\n" +
@@ -2501,7 +2418,7 @@ HEATDEATH - offline BIP-39 / EVM seed generator. Hardened build.
   node generate.mjs --split    [options]   split a phrase into SLIP-39 shares
   node generate.mjs --combine  [options]   restore a phrase from SLIP-39 shares
   node generate.mjs --op-export            generate or stage a wallet into 1Password
-  node generate.mjs --prove-sandbox        show the runtime denying net/exec/write
+  node generate.mjs --prove-guard          show the trusted-code capability guard
   node generate.mjs --license              licence and third-party notices
 
 Options
@@ -2526,7 +2443,7 @@ Options
 SLIP-39 shares - into ONE 1Password item, as a staging buffer for the moment
 of creation. Three shares in one vault are not a threshold backup; delete the
 item once the contents are where they belong. It needs --allow-child-process
-to run the op CLI, so it runs at 5/6 instead of 6/6, which is why it is a
+to run the op CLI, so its capability scope is 5/6 instead of 6/6, which is why it is a
 separate command. The secret reaches op only through the child's stdin -
 never argv, never an environment variable, never a file.
 
@@ -2542,104 +2459,40 @@ command-line arguments: argv is visible to every process via \`ps\` and is
 recorded in shell history.
 `;
 
-const KNOWN_FLAGS = [
-  "--self-test",
-  "--wizard",
-  "--generate",
-  "--verify",
-  "--split",
-  "--combine",
-  "--op-export",
-  "--dry-run",
-  "--prove-sandbox",
-  "--license",
-  "--dice",
-  "--show-public",
-  "--show-private",
-  "--wipe-screen",
-  "--qr",
-  "--help",
-];
-
-function parseArgs(argv) {
-  const flags = new Set();
-  const opts = new Map();
-  for (const arg of argv) {
-    const eq = arg.indexOf("=");
-    if (eq === -1) flags.add(arg);
-    else opts.set(arg.slice(0, eq), arg.slice(eq + 1));
-  }
-
-  for (const flag of flags) {
-    assert.ok(KNOWN_FLAGS.includes(flag), `Unknown flag "${flag}"`);
-  }
-  for (const key of opts.keys()) {
-    assert.ok(
-      ["--scheme", "--accounts", "--shares", "--group-threshold"].includes(key),
-      `Unknown option "${key}"`,
-    );
-  }
-
-  const scheme = opts.get("--scheme") ?? DEFAULT_SCHEME;
-  assert.ok(
-    Object.hasOwn(PATH_SCHEMES, scheme),
-    `Unknown --scheme "${scheme}". Available: ${Object.keys(PATH_SCHEMES).join(", ")}`,
-  );
-
-  const count = Number.parseInt(opts.get("--accounts") ?? String(DEFAULT_ACCOUNTS), 10);
-  assert.ok(
-    Number.isInteger(count) && count >= 1 && count <= MAX_ACCOUNTS,
-    `--accounts must be an integer between 1 and ${MAX_ACCOUNTS}`,
-  );
-
-  const groupThreshold = Number.parseInt(opts.get("--group-threshold") ?? "1", 10);
-  assert.ok(
-    Number.isInteger(groupThreshold) && groupThreshold >= 1,
-    "--group-threshold must be a positive integer",
-  );
-
-  return {
-    flags,
-    scheme,
-    count,
-    shareSpec: opts.get("--shares") ?? "2of3",
-    groupThreshold,
-    showPrivate: flags.has("--show-private"),
-    showPublic: flags.has("--show-public"),
-    useDice: flags.has("--dice"),
-    wipe: flags.has("--wipe-screen"),
-    dryRun: flags.has("--dry-run"),
-    qr: flags.has("--qr"),
-  };
-}
+const parseArgs = (argv) => parseCli(argv, {
+  defaultScheme: DEFAULT_SCHEME,
+  schemes: Object.keys(PATH_SCHEMES),
+  defaultAccounts: DEFAULT_ACCOUNTS,
+  maxAccounts: MAX_ACCOUNTS,
+});
 
 try {
   const cli = parseArgs(process.argv.slice(2));
-  if (cli.flags.has("--self-test")) {
+  if (cli.command === "self-test") {
     // The self-test prints no secrets, so it may run with redirected stdout.
     // That is what makes it usable in CI and in a `shasum` audit trail.
     assertRuntime({ requireTty: false });
     selfTest();
-  } else if (cli.flags.has("--wizard")) {
+  } else if (cli.command === "wizard") {
     await wizard(cli);
-  } else if (cli.flags.has("--generate")) {
+  } else if (cli.command === "generate") {
     await generate(cli);
-  } else if (cli.flags.has("--verify")) {
+  } else if (cli.command === "verify") {
     await verify(cli);
-  } else if (cli.flags.has("--split")) {
+  } else if (cli.command === "split") {
     await split(cli);
-  } else if (cli.flags.has("--combine")) {
+  } else if (cli.command === "combine") {
     await combine(cli);
-  } else if (cli.flags.has("--op-export")) {
+  } else if (cli.command === "op-export") {
     await exportToOnePassword(cli);
-  } else if (cli.flags.has("--license")) {
+  } else if (cli.command === "license") {
     process.stdout.write(LICENCE_NOTICE);
-  } else if (cli.flags.has("--prove-sandbox")) {
+  } else if (cli.command === "prove-guard") {
     // Prints no secrets, so redirected stdout is fine here.
     await proveSandbox();
   } else {
     process.stdout.write(USAGE);
-    process.exitCode = cli.flags.has("--help") ? 0 : 2;
+    process.exitCode = 0;
   }
 } catch (error) {
   // Error messages carry control-flow facts, not key material: no entropy,

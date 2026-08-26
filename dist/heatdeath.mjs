@@ -1,69 +1,115 @@
 #!/usr/bin/env node
 
 // generate.mjs
-import assert3 from "node:assert/strict";
+import assert4 from "node:assert/strict";
 import os from "node:os";
 import fs from "node:fs";
-import process from "node:process";
+import path from "node:path";
+import process2 from "node:process";
 import {
   createHash as createHash2,
   createHmac as createHmac2,
   pbkdf2Sync as pbkdf2Sync2,
   randomBytes as randomBytes4,
-  timingSafeEqual,
-  webcrypto
+  timingSafeEqual
 } from "node:crypto";
+
+// node_modules/@noble/hashes/_u64.js
+var U32_MASK64 = /* @__PURE__ */ (() => BigInt(2 ** 32 - 1))();
+var _32n = /* @__PURE__ */ BigInt(32);
+function fromBig(n, le = false) {
+  if (le)
+    return { h: Number(n & U32_MASK64), l: Number(n >> _32n & U32_MASK64) };
+  return { h: Number(n >> _32n & U32_MASK64) | 0, l: Number(n & U32_MASK64) | 0 };
+}
+function split(lst, le = false) {
+  const len = lst.length;
+  let Ah = new Uint32Array(len);
+  let Al = new Uint32Array(len);
+  for (let i = 0; i < len; i++) {
+    const { h, l } = fromBig(lst[i], le);
+    [Ah[i], Al[i]] = [h, l];
+  }
+  return [Ah, Al];
+}
+var fromNumH = (n) => n / 2 ** 32 | 0;
+var fromNumL = (n) => n >>> 0;
+function setU64FromNum(view, byteOffset, n, isLE2) {
+  const h = fromNumH(n);
+  const l = fromNumL(n);
+  view.setUint32(byteOffset, isLE2 ? l : h, isLE2);
+  view.setUint32(byteOffset + 4, isLE2 ? h : l, isLE2);
+}
+var shrSH = (h, _l, s) => h >>> s;
+var shrSL = (h, l, s) => h << 32 - s | l >>> s;
+var rotrSH = (h, l, s) => h >>> s | l << 32 - s;
+var rotrSL = (h, l, s) => h << 32 - s | l >>> s;
+var rotrBH = (h, l, s) => h << 64 - s | l >>> s - 32;
+var rotrBL = (h, l, s) => h >>> s - 32 | l << 64 - s;
+function add(Ah, Al, Bh, Bl) {
+  const l = (Al >>> 0) + (Bl >>> 0);
+  return { h: Ah + Bh + (l / 2 ** 32 | 0) | 0, l: l | 0 };
+}
+var add3L = (Al, Bl, Cl) => (Al >>> 0) + (Bl >>> 0) + (Cl >>> 0);
+var add3H = (low, Ah, Bh, Ch) => Ah + Bh + Ch + (low / 2 ** 32 | 0) | 0;
+var add4L = (Al, Bl, Cl, Dl) => (Al >>> 0) + (Bl >>> 0) + (Cl >>> 0) + (Dl >>> 0);
+var add4H = (low, Ah, Bh, Ch, Dh) => Ah + Bh + Ch + Dh + (low / 2 ** 32 | 0) | 0;
+var add5L = (Al, Bl, Cl, Dl, El) => (Al >>> 0) + (Bl >>> 0) + (Cl >>> 0) + (Dl >>> 0) + (El >>> 0);
+var add5H = (low, Ah, Bh, Ch, Dh, Eh) => Ah + Bh + Ch + Dh + Eh + (low / 2 ** 32 | 0) | 0;
 
 // node_modules/@noble/hashes/utils.js
 function isBytes(a) {
   return a instanceof Uint8Array || ArrayBuffer.isView(a) && a.constructor.name === "Uint8Array" && "BYTES_PER_ELEMENT" in a && a.BYTES_PER_ELEMENT === 1;
 }
+var atitle = (title) => title ? `"${title}" ` : "";
 function anumber(n, title = "") {
-  if (typeof n !== "number") {
-    const prefix = title && `"${title}" `;
-    throw new TypeError(`${prefix}expected number, got ${typeof n}`);
-  }
-  if (!Number.isSafeInteger(n) || n < 0) {
-    const prefix = title && `"${title}" `;
-    throw new RangeError(`${prefix}expected integer >= 0, got ${n}`);
-  }
+  if (typeof n !== "number")
+    throw new TypeError(atitle(title) + "expected number, got " + typeof n);
+  if (!Number.isSafeInteger(n) || n < 0)
+    throw new RangeError(atitle(title) + "expected integer >= 0, got " + n);
+  return n;
+}
+function abool(value, title = "") {
+  if (typeof value !== "boolean")
+    throw new TypeError(atitle(title) + "expected boolean, got type=" + typeof value);
+  return value;
 }
 function abytes(value, length, title = "") {
+  if (isBytes(value) && (length === void 0 || value.length === length))
+    return value;
+  if (length !== void 0)
+    anumber(length, "length");
   const bytes = isBytes(value);
-  const len = value?.length;
-  const needsLen = length !== void 0;
-  if (!bytes || needsLen && len !== length) {
-    const prefix = title && `"${title}" `;
-    const ofLen = needsLen ? ` of length ${length}` : "";
-    const got = bytes ? `length=${len}` : `type=${typeof value}`;
-    const message = prefix + "expected Uint8Array" + ofLen + ", got " + got;
-    if (!bytes)
-      throw new TypeError(message);
-    throw new RangeError(message);
-  }
-  return value;
+  const ofLen = length !== void 0 ? ` of length ${length}` : "";
+  const got = bytes ? `length=${value.length}` : `type=${typeof value}`;
+  const message = atitle(title) + "expected Uint8Array" + ofLen + ", got " + got;
+  if (!bytes)
+    throw new TypeError(message);
+  throw new RangeError(message);
 }
 function ahash(h) {
   if (typeof h !== "function" || typeof h.create !== "function")
-    throw new TypeError("Hash must wrapped by utils.createHasher");
+    throw new TypeError("expected hash wrapped by utils.createHasher");
   anumber(h.outputLen);
   anumber(h.blockLen);
-  if (h.outputLen < 1)
-    throw new Error('"outputLen" must be >= 1');
-  if (h.blockLen < 1)
-    throw new Error('"blockLen" must be >= 1');
+  if (h.outputLen < 1 || h.blockLen < 1)
+    throw new Error("hash blockLen / outputLen must be >= 1");
 }
+var aobject = (value, label) => {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new TypeError((label === "object" ? "" : `"${label}" `) + "expected object, got type=" + typeof value);
+};
 function aexists(instance, checkFinished = true) {
   if (instance.destroyed)
-    throw new Error("Hash instance has been destroyed");
+    throw new Error("hash was destroyed");
   if (checkFinished && instance.finished)
-    throw new Error("Hash#digest() has already been called");
+    throw new Error("digest() was already called");
 }
 function aoutput(out, instance) {
-  abytes(out, void 0, "digestInto() output");
+  abytes(out, void 0, "output");
   const min = instance.outputLen;
-  if (out.length < min) {
-    throw new RangeError('"digestInto() output" expected to be of length >=' + min);
+  if (!(out.length >= min)) {
+    throw new RangeError('"output" expected length >= ' + min);
   }
 }
 function u32(arr) {
@@ -109,15 +155,8 @@ function bytesToHex(bytes) {
   }
   return hex;
 }
-var asciis = { _0: 48, _9: 57, A: 65, F: 70, a: 97, f: 102 };
 function asciiToBase16(ch) {
-  if (ch >= asciis._0 && ch <= asciis._9)
-    return ch - asciis._0;
-  if (ch >= asciis.A && ch <= asciis.F)
-    return ch - (asciis.A - 10);
-  if (ch >= asciis.a && ch <= asciis.f)
-    return ch - (asciis.a - 10);
-  return;
+  return ch >= 48 && ch <= 57 ? ch - 48 : ch >= 65 && ch <= 70 ? ch - (65 - 10) : ch >= 97 && ch <= 102 ? ch - (97 - 10) : void 0;
 }
 function hexToBytes(hex) {
   if (typeof hex !== "string")
@@ -172,13 +211,17 @@ function concatBytes(...arrays) {
   }
   return res;
 }
-function checkOpts(defaults, opts) {
-  if (opts !== void 0 && {}.toString.call(opts) !== "[object Object]")
-    throw new TypeError("options must be object or undefined");
+function checkOpts(defaults, opts, title = "opts") {
+  aobject(defaults, "defaults");
+  if (opts !== void 0)
+    aobject(opts, title);
   const merged = Object.assign(defaults, opts);
   return merged;
 }
 function createHasher(hashCons, info = {}) {
+  if (typeof hashCons !== "function")
+    throw new TypeError('"hashCons" expected function, got type=' + typeof hashCons);
+  info = checkOpts({}, info, "info");
   const hashC = (msg, opts) => hashCons(opts).update(msg).digest();
   const tmp = hashCons(void 0);
   hashC.outputLen = tmp.outputLen;
@@ -236,24 +279,28 @@ var HashMD = class {
     abytes(data);
     const { view, buffer, blockLen } = this;
     const len = data.length;
+    let processed = false;
     for (let pos = 0; pos < len; ) {
       const take = Math.min(blockLen - this.pos, len - pos);
       if (take === blockLen) {
         const dataView = createView(data);
         for (; blockLen <= len - pos; pos += blockLen)
           this.process(dataView, pos);
+        processed = true;
         continue;
       }
-      buffer.set(data.subarray(pos, pos + take), this.pos);
+      buffer.set(pos === 0 && take === len ? data : data.subarray(pos, pos + take), this.pos);
       this.pos += take;
       pos += take;
       if (this.pos === blockLen) {
         this.process(view, 0);
         this.pos = 0;
+        processed = true;
       }
     }
     this.length += data.length;
-    this.roundClean();
+    if (processed)
+      this.roundClean();
     return this;
   }
   digestInto(out) {
@@ -263,23 +310,20 @@ var HashMD = class {
     const { buffer, view, blockLen, isLE: isLE2 } = this;
     let { pos } = this;
     buffer[pos++] = 128;
-    clean(this.buffer.subarray(pos));
+    buffer.fill(0, pos);
     if (this.padOffset > blockLen - pos) {
       this.process(view, 0);
-      pos = 0;
+      buffer.fill(0);
     }
-    for (let i = pos; i < blockLen; i++)
-      buffer[i] = 0;
-    view.setBigUint64(blockLen - 8, BigInt(this.length * 8), isLE2);
+    setU64FromNum(view, blockLen - 8, this.length * 8, isLE2);
     this.process(view, 0);
-    const oview = createView(out);
+    this.roundClean();
+    const oview = out === buffer ? view : createView(out);
     const len = this.outputLen;
-    if (len % 4)
-      throw new Error("_sha2: outputLen must be aligned to 32bit");
     const outLen = len / 4;
     const state = this.get();
-    if (outLen > state.length)
-      throw new Error("_sha2: outputLen bigger than state");
+    if (len % 4 || outLen > state.length)
+      throw new Error("invalid outputLen");
     for (let i = 0; i < outLen; i++)
       oview.setUint32(4 * i, state[i], isLE2);
   }
@@ -290,15 +334,13 @@ var HashMD = class {
     this.destroy();
     return res;
   }
-  _cloneInto(to) {
-    to ||= new this.constructor();
-    to.set(...this.get());
-    const { blockLen, buffer, length, finished, destroyed, pos } = this;
+  _cloneIntoMeta(to) {
+    const { buffer, length, finished, destroyed, pos } = this;
     to.destroyed = destroyed;
     to.finished = finished;
     to.length = length;
     to.pos = pos;
-    if (length % blockLen)
+    if (pos)
       to.buffer.set(buffer);
     return to;
   }
@@ -334,45 +376,6 @@ var SHA512_IV = /* @__PURE__ */ Uint32Array.from([
   1541459225,
   327033209
 ]);
-
-// node_modules/@noble/hashes/_u64.js
-var U32_MASK64 = /* @__PURE__ */ BigInt(2 ** 32 - 1);
-var _32n = /* @__PURE__ */ BigInt(32);
-function fromBig(n, le = false) {
-  if (le)
-    return { h: Number(n & U32_MASK64), l: Number(n >> _32n & U32_MASK64) };
-  return { h: Number(n >> _32n & U32_MASK64) | 0, l: Number(n & U32_MASK64) | 0 };
-}
-function split(lst, le = false) {
-  const len = lst.length;
-  let Ah = new Uint32Array(len);
-  let Al = new Uint32Array(len);
-  for (let i = 0; i < len; i++) {
-    const { h, l } = fromBig(lst[i], le);
-    [Ah[i], Al[i]] = [h, l];
-  }
-  return [Ah, Al];
-}
-var shrSH = (h, _l, s) => h >>> s;
-var shrSL = (h, l, s) => h << 32 - s | l >>> s;
-var rotrSH = (h, l, s) => h >>> s | l << 32 - s;
-var rotrSL = (h, l, s) => h << 32 - s | l >>> s;
-var rotrBH = (h, l, s) => h << 64 - s | l >>> s - 32;
-var rotrBL = (h, l, s) => h >>> s - 32 | l << 64 - s;
-var rotlSH = (h, l, s) => h << s | l >>> 32 - s;
-var rotlSL = (h, l, s) => l << s | h >>> 32 - s;
-var rotlBH = (h, l, s) => l << s - 32 | h >>> 64 - s;
-var rotlBL = (h, l, s) => h << s - 32 | l >>> 64 - s;
-function add(Ah, Al, Bh, Bl) {
-  const l = (Al >>> 0) + (Bl >>> 0);
-  return { h: Ah + Bh + (l / 2 ** 32 | 0) | 0, l: l | 0 };
-}
-var add3L = (Al, Bl, Cl) => (Al >>> 0) + (Bl >>> 0) + (Cl >>> 0);
-var add3H = (low, Ah, Bh, Ch) => Ah + Bh + Ch + (low / 2 ** 32 | 0) | 0;
-var add4L = (Al, Bl, Cl, Dl) => (Al >>> 0) + (Bl >>> 0) + (Cl >>> 0) + (Dl >>> 0);
-var add4H = (low, Ah, Bh, Ch, Dh) => Ah + Bh + Ch + Dh + (low / 2 ** 32 | 0) | 0;
-var add5L = (Al, Bl, Cl, Dl, El) => (Al >>> 0) + (Bl >>> 0) + (Cl >>> 0) + (Dl >>> 0) + (El >>> 0);
-var add5H = (low, Ah, Bh, Ch, Dh, Eh) => Ah + Bh + Ch + Dh + Eh + (low / 2 ** 32 | 0) | 0;
 
 // node_modules/@noble/hashes/sha2.js
 var SHA256_K = /* @__PURE__ */ Uint32Array.from([
@@ -443,23 +446,47 @@ var SHA256_K = /* @__PURE__ */ Uint32Array.from([
 ]);
 var SHA256_W = /* @__PURE__ */ new Uint32Array(64);
 var SHA2_32B = class extends HashMD {
-  constructor(outputLen) {
+  // We cannot use array here since array allows indexing by variable
+  // which means optimizer/compiler cannot use registers.
+  // Numeric initializers matter: starting the fields as `undefined` changes
+  // V8's field representation and makes sha256 3x slower (measured).
+  A = 0;
+  B = 0;
+  C = 0;
+  D = 0;
+  E = 0;
+  F = 0;
+  G = 0;
+  H = 0;
+  constructor(outputLen, IV) {
     super(64, outputLen, 8, false);
+    this.A = IV[0] | 0;
+    this.B = IV[1] | 0;
+    this.C = IV[2] | 0;
+    this.D = IV[3] | 0;
+    this.E = IV[4] | 0;
+    this.F = IV[5] | 0;
+    this.G = IV[6] | 0;
+    this.H = IV[7] | 0;
   }
   get() {
-    const { A, B, C, D, E, F, G, H } = this;
-    return [A, B, C, D, E, F, G, H];
+    const { A, B: B2, C, D, E, F, G, H } = this;
+    return [A, B2, C, D, E, F, G, H];
   }
   // prettier-ignore
-  set(A, B, C, D, E, F, G, H) {
+  set(A, B2, C, D, E, F, G, H) {
     this.A = A | 0;
-    this.B = B | 0;
+    this.B = B2 | 0;
     this.C = C | 0;
     this.D = D | 0;
     this.E = E | 0;
     this.F = F | 0;
     this.G = G | 0;
     this.H = H | 0;
+  }
+  _cloneInto(to) {
+    (to ||= new this.constructor()).set(...this.get());
+    return this._cloneIntoMeta(to);
   }
   process(view, offset) {
     for (let i = 0; i < 16; i++, offset += 4)
@@ -471,30 +498,30 @@ var SHA2_32B = class extends HashMD {
       const s1 = rotr(W2, 17) ^ rotr(W2, 19) ^ W2 >>> 10;
       SHA256_W[i] = s1 + SHA256_W[i - 7] + s0 + SHA256_W[i - 16] | 0;
     }
-    let { A, B, C, D, E, F, G, H } = this;
+    let { A, B: B2, C, D, E, F, G, H } = this;
     for (let i = 0; i < 64; i++) {
       const sigma1 = rotr(E, 6) ^ rotr(E, 11) ^ rotr(E, 25);
       const T1 = H + sigma1 + Chi(E, F, G) + SHA256_K[i] + SHA256_W[i] | 0;
       const sigma0 = rotr(A, 2) ^ rotr(A, 13) ^ rotr(A, 22);
-      const T2 = sigma0 + Maj(A, B, C) | 0;
+      const T2 = sigma0 + Maj(A, B2, C) | 0;
       H = G;
       G = F;
       F = E;
       E = D + T1 | 0;
       D = C;
-      C = B;
-      B = A;
+      C = B2;
+      B2 = A;
       A = T1 + T2 | 0;
     }
     A = A + this.A | 0;
-    B = B + this.B | 0;
+    B2 = B2 + this.B | 0;
     C = C + this.C | 0;
     D = D + this.D | 0;
     E = E + this.E | 0;
     F = F + this.F | 0;
     G = G + this.G | 0;
     H = H + this.H | 0;
-    this.set(A, B, C, D, E, F, G, H);
+    this.set(A, B2, C, D, E, F, G, H);
   }
   roundClean() {
     clean(SHA256_W);
@@ -506,18 +533,8 @@ var SHA2_32B = class extends HashMD {
   }
 };
 var _SHA256 = class extends SHA2_32B {
-  // We cannot use array here since array allows indexing by variable
-  // which means optimizer/compiler cannot use registers.
-  A = SHA256_IV[0] | 0;
-  B = SHA256_IV[1] | 0;
-  C = SHA256_IV[2] | 0;
-  D = SHA256_IV[3] | 0;
-  E = SHA256_IV[4] | 0;
-  F = SHA256_IV[5] | 0;
-  G = SHA256_IV[6] | 0;
-  H = SHA256_IV[7] | 0;
   constructor() {
-    super(32);
+    super(32, SHA256_IV);
   }
 };
 var K512 = /* @__PURE__ */ (() => split([
@@ -607,8 +624,45 @@ var SHA512_Kl = /* @__PURE__ */ (() => K512[1])();
 var SHA512_W_H = /* @__PURE__ */ new Uint32Array(80);
 var SHA512_W_L = /* @__PURE__ */ new Uint32Array(80);
 var SHA2_64B = class extends HashMD {
-  constructor(outputLen) {
+  // We cannot use array here since array allows indexing by variable
+  // which means optimizer/compiler cannot use registers.
+  // h -- high 32 bits, l -- low 32 bits
+  // Numeric initializers matter: starting the fields as `undefined` changes
+  // V8's field representation and slows hashing down (measured on sha256).
+  Ah = 0;
+  Al = 0;
+  Bh = 0;
+  Bl = 0;
+  Ch = 0;
+  Cl = 0;
+  Dh = 0;
+  Dl = 0;
+  Eh = 0;
+  El = 0;
+  Fh = 0;
+  Fl = 0;
+  Gh = 0;
+  Gl = 0;
+  Hh = 0;
+  Hl = 0;
+  constructor(outputLen, IV) {
     super(128, outputLen, 16, false);
+    this.Ah = IV[0] | 0;
+    this.Al = IV[1] | 0;
+    this.Bh = IV[2] | 0;
+    this.Bl = IV[3] | 0;
+    this.Ch = IV[4] | 0;
+    this.Cl = IV[5] | 0;
+    this.Dh = IV[6] | 0;
+    this.Dl = IV[7] | 0;
+    this.Eh = IV[8] | 0;
+    this.El = IV[9] | 0;
+    this.Fh = IV[10] | 0;
+    this.Fl = IV[11] | 0;
+    this.Gh = IV[12] | 0;
+    this.Gl = IV[13] | 0;
+    this.Hh = IV[14] | 0;
+    this.Hl = IV[15] | 0;
   }
   // prettier-ignore
   get() {
@@ -633,6 +687,10 @@ var SHA2_64B = class extends HashMD {
     this.Gl = Gl | 0;
     this.Hh = Hh | 0;
     this.Hl = Hl | 0;
+  }
+  _cloneInto(to) {
+    (to ||= new this.constructor()).set(...this.get());
+    return this._cloneIntoMeta(to);
   }
   process(view, offset) {
     for (let i = 0; i < 16; i++, offset += 4) {
@@ -703,24 +761,8 @@ var SHA2_64B = class extends HashMD {
   }
 };
 var _SHA512 = class extends SHA2_64B {
-  Ah = SHA512_IV[0] | 0;
-  Al = SHA512_IV[1] | 0;
-  Bh = SHA512_IV[2] | 0;
-  Bl = SHA512_IV[3] | 0;
-  Ch = SHA512_IV[4] | 0;
-  Cl = SHA512_IV[5] | 0;
-  Dh = SHA512_IV[6] | 0;
-  Dl = SHA512_IV[7] | 0;
-  Eh = SHA512_IV[8] | 0;
-  El = SHA512_IV[9] | 0;
-  Fh = SHA512_IV[10] | 0;
-  Fl = SHA512_IV[11] | 0;
-  Gh = SHA512_IV[12] | 0;
-  Gl = SHA512_IV[13] | 0;
-  Hh = SHA512_IV[14] | 0;
-  Hl = SHA512_IV[15] | 0;
   constructor() {
-    super(64);
+    super(64, SHA512_IV);
   }
 };
 var sha256 = /* @__PURE__ */ createHasher(
@@ -733,8 +775,33 @@ var sha512 = /* @__PURE__ */ createHasher(
 );
 
 // node_modules/@noble/curves/utils.js
+function aarray(item, title, inner = () => {
+}) {
+  if (!Array.isArray(item))
+    throw new TypeError(`"${title}" expected array, got type=${typeof item}`);
+  for (let i = 0; i < item.length; i++)
+    inner(item[i], `${title}[${i}]`);
+  return item;
+}
 var abytes2 = (value, length, title) => abytes(value, length, title);
 var anumber2 = anumber;
+function astring(value, title = "") {
+  if (typeof value !== "string") {
+    const prefix = title && `"${title}" `;
+    throw new TypeError(prefix + "expected string, got type=" + typeof value);
+  }
+  return value;
+}
+function aobject2(value, title = "object") {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new TypeError(title === "object" ? "expected valid options object" : `"${title}" expected object, got type=${typeof value}`);
+  return value;
+}
+function afunction(value, title) {
+  if (typeof value !== "function")
+    throw new TypeError(`"${title}" is invalid: expected function, got ${typeof value}`);
+  return value;
+}
 var bytesToHex2 = bytesToHex;
 var concatBytes2 = (...arrays) => concatBytes(...arrays);
 var hexToBytes2 = (hex) => hexToBytes(hex);
@@ -742,11 +809,10 @@ var isBytes2 = isBytes;
 var randomBytes2 = (bytesLength) => randomBytes(bytesLength);
 var _0n = /* @__PURE__ */ BigInt(0);
 var _1n = /* @__PURE__ */ BigInt(1);
-function abool(value, title = "") {
-  if (typeof value !== "boolean") {
-    const prefix = title && `"${title}" `;
-    throw new TypeError(prefix + "expected boolean, got type=" + typeof value);
-  }
+var atitle2 = (title) => title ? `"${title}" ` : "";
+function abool2(value, title = "") {
+  if (typeof value !== "boolean")
+    throw new TypeError(atitle2(title) + "expected boolean, got type=" + typeof value);
   return value;
 }
 function abignumber(n) {
@@ -785,12 +851,13 @@ function bytesToNumberLE(bytes) {
 function numberToBytesBE(n, len) {
   anumber(len);
   if (len === 0)
-    throw new RangeError("zero length");
+    throw new Error("zero output length is invalid");
   n = abignumber(n);
+  const expectedLen = len * 2;
   const hex = n.toString(16);
-  if (hex.length > len * 2)
-    throw new RangeError("number too large");
-  return hexToBytes(hex.padStart(len * 2, "0"));
+  if (hex.length > expectedLen)
+    throw new RangeError("number is too large");
+  return hexToBytes(hex.padStart(expectedLen, "0"));
 }
 function numberToBytesLE(n, len) {
   return numberToBytesBE(n, len).reverse();
@@ -798,7 +865,9 @@ function numberToBytesLE(n, len) {
 function copyBytes(bytes) {
   return Uint8Array.from(abytes2(bytes));
 }
-var isPosBig = (n) => typeof n === "bigint" && _0n <= n;
+function isPosBig(n) {
+  return typeof n === "bigint" && _0n <= n;
+}
 function inRange(n, min, max) {
   return isPosBig(n) && isPosBig(min) && isPosBig(max) && min <= n && n < max;
 }
@@ -809,12 +878,12 @@ function aInRange(title, n, min, max) {
 function bitLen(n) {
   if (n < _0n)
     throw new Error("expected non-negative bigint, got " + n);
-  let len;
-  for (len = 0; n > _0n; n >>= _1n, len += 1)
-    ;
-  return len;
+  return n === _0n ? 0 : n.toString(2).length;
 }
-var bitMask = (n) => (_1n << BigInt(n)) - _1n;
+var bitMask = (n) => {
+  asafenumber(n, "n");
+  return (_1n << BigInt(n)) - _1n;
+};
 function createHmacDrbg(hashLen, qByteLen, hmacFn) {
   anumber(hashLen, "hashLen");
   anumber(qByteLen, "qByteLen");
@@ -866,18 +935,21 @@ function createHmacDrbg(hashLen, qByteLen, hmacFn) {
   };
   return genUntil;
 }
-function validateObject(object, fields = {}, optFields = {}) {
-  if (Object.prototype.toString.call(object) !== "[object Object]")
-    throw new TypeError("expected valid options object");
+function validateObject(object, fields = {}, optFields = {}, title = "object") {
+  aobject2(object, title);
+  aobject2(fields, "fields");
+  aobject2(optFields, "optFields");
   function checkField(fieldName, expectedType, isOpt) {
-    if (!isOpt && expectedType !== "function" && !Object.hasOwn(object, fieldName))
-      throw new TypeError(`param "${fieldName}" is invalid: expected own property`);
+    const label = title === "object" ? `param "${String(fieldName)}"` : `"${title}.${String(fieldName)}"`;
     const val = object[fieldName];
+    if (!Object.hasOwn(object, fieldName) && (isOpt ? val !== void 0 : expectedType !== "function")) {
+      throw new TypeError(`${label} is invalid: expected own property`);
+    }
     if (isOpt && val === void 0)
       return;
     const current = typeof val;
     if (current !== expectedType || val === null)
-      throw new TypeError(`param "${fieldName}" is invalid: expected ${expectedType}, got ${current}`);
+      throw new TypeError(`${label} is invalid: expected ${expectedType}, got ${current}`);
   }
   const iter = (f, isOpt) => Object.entries(f).forEach(([k, v]) => checkField(k, v, isOpt));
   iter(fields, false);
@@ -894,14 +966,64 @@ var _5n = /* @__PURE__ */ BigInt(5);
 var _7n = /* @__PURE__ */ BigInt(7);
 var _8n = /* @__PURE__ */ BigInt(8);
 var _9n = /* @__PURE__ */ BigInt(9);
+var _15n = /* @__PURE__ */ BigInt(15);
 var _16n = /* @__PURE__ */ BigInt(16);
+var POW_WINDOWED_MIN = /* @__PURE__ */ BigInt("0x10000000000000000");
 function mod(a, b) {
   if (b <= _0n2)
     throw new Error("mod: expected positive modulus, got " + b);
   const result = a % b;
   return result >= _0n2 ? result : b + result;
 }
+function pow(num, power, modulo) {
+  if (modulo <= _1n2)
+    throw new Error("pow: expected modulus > 1, got " + modulo);
+  if (typeof power !== "bigint")
+    throw new TypeError("invalid exponent: expected bigint, got " + typeof power);
+  if (power < _0n2)
+    throw new Error("invalid exponent, negatives unsupported");
+  if (power === _0n2)
+    return _1n2;
+  if (power === _1n2)
+    return num;
+  let d = num % modulo;
+  if (d < _0n2)
+    d += modulo;
+  if (power < POW_WINDOWED_MIN) {
+    let p2 = _1n2;
+    while (power > _0n2) {
+      if (power & _1n2)
+        p2 = p2 * d % modulo;
+      d = d * d % modulo;
+      power >>= _1n2;
+    }
+    return p2;
+  }
+  const digits = [];
+  while (power > _0n2) {
+    digits.push(Number(power & _15n));
+    power >>= _4n;
+  }
+  const table = new Array(16);
+  table[0] = _1n2;
+  table[1] = d;
+  for (let i = 2; i < 16; i++)
+    table[i] = table[i - 1] * d % modulo;
+  let p = table[digits[digits.length - 1]];
+  for (let w = digits.length - 2; w >= 0; w--) {
+    p = p * p % modulo;
+    p = p * p % modulo;
+    p = p * p % modulo;
+    p = p * p % modulo;
+    const digit = digits[w];
+    if (digit !== 0)
+      p = p * table[digit] % modulo;
+  }
+  return p;
+}
 function pow2(x, power, modulo) {
+  if (modulo <= _1n2)
+    throw new Error("pow2: expected modulus > 1, got " + modulo);
   if (power < _0n2)
     throw new Error("pow2: expected non-negative exponent, got " + power);
   let res = x;
@@ -914,27 +1036,41 @@ function pow2(x, power, modulo) {
 function invert(number, modulo) {
   if (number === _0n2)
     throw new Error("invert: expected non-zero number");
-  if (modulo <= _0n2)
-    throw new Error("invert: expected positive modulus, got " + modulo);
+  if (modulo <= _1n2)
+    throw new Error("invert: expected modulus > 1, got " + modulo);
   let a = mod(number, modulo);
   let b = modulo;
-  let x = _0n2, y = _1n2, u = _1n2, v = _0n2;
+  let x = _0n2, u = _1n2;
   while (a !== _0n2) {
     const q = b / a;
     const r = b - a * q;
     const m = x - u * q;
-    const n = y - v * q;
-    b = a, a = r, x = u, y = v, u = m, v = n;
+    b = a, a = r, x = u, u = m;
   }
-  const gcd2 = b;
-  if (gcd2 !== _1n2)
+  const gcd = b;
+  if (gcd !== _1n2)
     throw new Error("invert: does not exist");
   return mod(x, modulo);
+}
+function invertCt(a, prime) {
+  if (prime <= _1n2)
+    throw new Error("invertCt: expected prime modulus > 1, got " + prime);
+  const an = mod(a, prime);
+  if (an === _0n2)
+    throw new Error("invertCt: expected non-zero number");
+  const inverse = pow(an, prime - _2n, prime);
+  if (mod(an * inverse, prime) !== _1n2)
+    throw new Error("invertCt: does not exist");
+  return inverse;
 }
 function assertIsSquare(Fp, root, n) {
   const F = Fp;
   if (!F.eql(F.sqr(root), n))
     throw new Error("Cannot find square root");
+}
+function aoddModulus(order, fnName) {
+  if ((order & _1n2) === _0n2)
+    throw new Error(fnName + ": expected odd modulus, got " + order);
 }
 function sqrt3mod4(Fp, n) {
   const F = Fp;
@@ -961,7 +1097,7 @@ function sqrt9mod16(P) {
   const c2 = tn(Fp_, c1);
   const c3 = tn(Fp_, Fp_.neg(c1));
   const c4 = (P + _7n) / _16n;
-  return (Fp, n) => {
+  return ((Fp, n) => {
     const F = Fp;
     let tv1 = F.pow(n, c4);
     let tv2 = F.mul(tv1, c1);
@@ -975,11 +1111,12 @@ function sqrt9mod16(P) {
     const root = F.cmov(tv1, tv2, e3);
     assertIsSquare(F, root, n);
     return root;
-  };
+  });
 }
 function tonelliShanks(P) {
   if (P < _3n)
     throw new Error("sqrt is not defined for small field");
+  aoddModulus(P, "tonelliShanks");
   let Q = P - _1n2;
   let S = 0;
   while (Q % _2n === _0n2) {
@@ -1008,7 +1145,7 @@ function tonelliShanks(P) {
     let R = F.pow(n, Q1div2);
     while (!F.eql(t, F.ONE)) {
       if (F.is0(t))
-        return F.ZERO;
+        throw new Error("Cannot find square root: probably non-prime P");
       let i = 1;
       let t_tmp = F.sqr(t);
       while (!F.eql(t_tmp, F.ONE)) {
@@ -1028,6 +1165,7 @@ function tonelliShanks(P) {
   };
 }
 function FpSqrt(P) {
+  aoddModulus(P, "Fp.sqrt");
   if (P % _4n === _3n)
     return sqrt3mod4;
   if (P % _8n === _5n)
@@ -1056,43 +1194,23 @@ var FIELD_FIELDS = [
   "sqrN"
 ];
 function validateField(field) {
-  const initial = {
-    ORDER: "bigint",
-    BYTES: "number",
-    BITS: "number"
-  };
-  const opts = FIELD_FIELDS.reduce((map, val) => {
-    map[val] = "function";
-    return map;
-  }, initial);
-  validateObject(field, opts);
+  aobject2(field, "field");
+  if (typeof field.ORDER !== "bigint")
+    throw new TypeError('param "ORDER" is invalid: expected bigint, got ' + typeof field.ORDER);
   asafenumber(field.BYTES, "BYTES");
   asafenumber(field.BITS, "BITS");
+  for (const name of FIELD_FIELDS)
+    afunction(field[name], "field." + name);
   if (field.BYTES < 1 || field.BITS < 1)
     throw new Error("invalid field: expected BYTES/BITS > 0");
   if (field.ORDER <= _1n2)
     throw new Error("invalid field: expected ORDER > 1, got " + field.ORDER);
   return field;
 }
-function FpPow(Fp, num, power) {
-  const F = Fp;
-  if (power < _0n2)
-    throw new Error("invalid exponent, negatives unsupported");
-  if (power === _0n2)
-    return F.ONE;
-  if (power === _1n2)
-    return num;
-  let p = F.ONE;
-  let d = num;
-  while (power > _0n2) {
-    if (power & _1n2)
-      p = F.mul(p, d);
-    d = F.sqr(d);
-    power >>= _1n2;
-  }
-  return p;
-}
 function FpInvertBatch(Fp, nums, passZero = false) {
+  validateField(Fp);
+  aarray(nums, "nums");
+  abool2(passZero, "passZero");
   const F = Fp;
   const inverted = new Array(nums.length).fill(passZero ? F.ZERO : void 0);
   const multipliedAcc = nums.reduce((acc, num, i) => {
@@ -1111,7 +1229,9 @@ function FpInvertBatch(Fp, nums, passZero = false) {
   return inverted;
 }
 function FpLegendre(Fp, n) {
+  validateField(Fp);
   const F = Fp;
+  aoddModulus(F.ORDER, "FpLegendre");
   const p1mod2 = (F.ORDER - _1n2) / _2n;
   const powered = F.pow(n, p1mod2);
   const yes = F.eql(powered, F.ONE);
@@ -1130,7 +1250,7 @@ function nLength(n, nBitLength) {
     throw new Error("invalid n length: expected positive bit length, got " + nBitLength);
   const bits = bitLen(n);
   if (nBitLength !== void 0 && nBitLength < bits)
-    throw new Error(`invalid n length: expected bit length (${bits}) >= n.length (${nBitLength})`);
+    throw new Error(`invalid n length: expected nBitLength (${nBitLength}) >= bitLen(n) (${bits})`);
   const _nBitLength = nBitLength !== void 0 ? nBitLength : bits;
   const nByteLength = Math.ceil(_nBitLength / 8);
   return { nBitLength: _nBitLength, nByteLength };
@@ -1207,7 +1327,7 @@ var _Field = class {
     return mod(lhs * rhs, this.ORDER);
   }
   pow(num, power) {
-    return FpPow(this, num, power);
+    return pow(num, power, this.ORDER);
   }
   div(lhs, rhs) {
     return mod(lhs * invert(rhs, this.ORDER), this.ORDER);
@@ -1261,17 +1381,17 @@ var _Field = class {
   }
   // TODO: we don't need it here, move out to separate fn
   invertBatch(lst) {
-    return FpInvertBatch(this, lst);
+    return FpInvertBatch(this, lst, true);
   }
   // We can't move this out because Fp6, Fp12 implement it
   // and it's unclear what to return in there.
   cmov(a, b, condition) {
-    abool(condition, "condition");
+    abool2(condition, "condition");
     return condition ? b : a;
   }
 };
-Object.freeze(_Field.prototype);
 function Field(ORDER, opts = {}) {
+  Object.freeze(_Field.prototype);
   return new _Field(ORDER, opts);
 }
 function getFieldBytesLength(fieldOrder) {
@@ -1301,198 +1421,348 @@ function mapHashToField(key, fieldOrder, isLE2 = false) {
 // node_modules/@noble/curves/abstract/curve.js
 var _0n3 = /* @__PURE__ */ BigInt(0);
 var _1n3 = /* @__PURE__ */ BigInt(1);
-function negateCt(condition, item) {
-  const neg = item.negate();
-  return condition ? neg : item;
+var _4n2 = /* @__PURE__ */ BigInt(4);
+var BLIND_BYTES = 16;
+var BLIND_BITS = 128;
+var FW_WINDOW = 5;
+var TABLE_BYTES_MAX = /* @__PURE__ */ (() => 2 ** 31)();
+function validatePointCons(Point2) {
+  const pc = Point2;
+  if (typeof pc !== "function")
+    throw new TypeError('"Point" expected constructor, got type=' + typeof Point2);
+  afunction(pc.fromAffine, "Point.fromAffine");
+  afunction(pc.fromBytes, "Point.fromBytes");
+  afunction(pc.fromHex, "Point.fromHex");
+  aobject2(pc.BASE, "Point.BASE");
+  aobject2(pc.ZERO, "Point.ZERO");
+  validateField(pc.Fp);
+  validateField(pc.Fn);
 }
 function normalizeZ(c, points) {
+  validatePointCons(c);
+  validateMSMPoints(points, c);
   const invertedZs = FpInvertBatch(c.Fp, points.map((p) => p.Z));
   return points.map((p, i) => c.fromAffine(p.toAffine(invertedZs[i])));
 }
-function validateW(W, bits) {
-  if (!Number.isSafeInteger(W) || W <= 0 || W > bits)
-    throw new Error("invalid window size, expected [1.." + bits + "], got W=" + W);
+function validateW(W, bits, min = 1) {
+  if (!Number.isSafeInteger(W) || W < min || W > bits)
+    throw new Error("invalid window size, expected [" + min + ".." + bits + "], got W=" + W);
 }
-function calcWOpts(W, scalarBits) {
-  validateW(W, scalarBits);
-  const windows = Math.ceil(scalarBits / W) + 1;
-  const windowSize = 2 ** (W - 1);
-  const maxNumber = 2 ** W;
-  const mask = bitMask(W);
-  const shiftBy = BigInt(W);
-  return { windows, windowSize, mask, maxNumber, shiftBy };
+function validateTableBytes(numPoints, fpBytes) {
+  const bytes = numPoints * (4 * fpBytes + 128);
+  if (bytes > TABLE_BYTES_MAX)
+    throw new Error("invalid window size: table would need ~" + Math.ceil(bytes / 2 ** 20) + " MiB, max " + TABLE_BYTES_MAX / 2 ** 20 + " MiB");
 }
-function calcOffsets(n, window, wOpts) {
-  const { windowSize, mask, maxNumber, shiftBy } = wOpts;
-  let wbits = Number(n & mask);
-  let nextN = n >> shiftBy;
-  if (wbits > windowSize) {
-    wbits -= maxNumber;
-    nextN += _1n3;
+function probeRandomBytes(randomBytes5, length) {
+  if (randomBytes5 === void 0)
+    return void 0;
+  afunction(randomBytes5, "randomBytes");
+  try {
+    const probe = randomBytes5(length);
+    if (!isBytes2(probe) || probe.length !== length)
+      return void 0;
+  } catch {
+    return void 0;
   }
-  const offsetStart = window * windowSize;
-  const offset = offsetStart + Math.abs(wbits) - 1;
-  const isZero = wbits === 0;
-  const isNeg = wbits < 0;
-  const isNegF = window % 2 !== 0;
-  const offsetF = offsetStart;
-  return { nextN, offset, isZero, isNeg, isNegF, offsetF };
+  return randomBytes5;
 }
-var pointPrecomputes = /* @__PURE__ */ new WeakMap();
+function validateMSMPoints(points, c) {
+  aarray(points, "points");
+  points.forEach((p, i) => {
+    if (!(p instanceof c))
+      throw new Error("invalid point at index " + i);
+  });
+}
+function validateMSMScalars(scalars, field, maxScalar) {
+  if (!Array.isArray(scalars))
+    throw new Error("array of scalars expected");
+  scalars.forEach((s, i) => {
+    const ok = maxScalar === void 0 ? field.isValid(s) : isPosBig(s) && s < maxScalar;
+    if (!ok)
+      throw new Error("invalid scalar at index " + i);
+  });
+}
 var pointWindowSizes = /* @__PURE__ */ new WeakMap();
-function getW(P) {
+function getWindowSize(P) {
   return pointWindowSizes.get(P) || 1;
 }
-function assert0(n) {
-  if (n !== _0n3)
-    throw new Error("invalid wNAF");
+function oddMultiples(p, size) {
+  const dbl = p.double();
+  const t = [p];
+  for (let j = 1; j < size; j++)
+    t.push(t[j - 1].add(dbl));
+  return t;
 }
-var wNAF = class {
+function wnafDigits(n, W) {
+  const size = 2 ** W;
+  const half = size / 2;
+  const mask = BigInt(size - 1);
+  const d = [];
+  while (n > _0n3) {
+    let w = 0;
+    if (n & _1n3) {
+      w = Number(n & mask);
+      if (w >= half)
+        w -= size;
+      n -= BigInt(w);
+    }
+    d.push(w);
+    n >>= _1n3;
+  }
+  return d;
+}
+function signedWindowDigits(n, W, windows) {
+  const size = 2 ** W;
+  const half = size / 2;
+  const mask = BigInt(size - 1);
+  const shiftBy = BigInt(W);
+  const d = [];
+  for (let w = 0; w < windows; w++) {
+    let v = Number(n & mask);
+    n >>= shiftBy;
+    if (v > half) {
+      v -= size;
+      n += _1n3;
+    }
+    d.push(v);
+  }
+  if (n !== _0n3)
+    throw new Error("invalid wnaf");
+  return d;
+}
+function wnafWalk(zero, tables, digits) {
+  let max = 0;
+  for (const d of digits)
+    max = Math.max(max, d.length);
+  let acc = zero;
+  for (let bit = max - 1; bit >= 0; bit--) {
+    if (bit !== max - 1)
+      acc = acc.double();
+    for (let i = 0; i < digits.length; i++) {
+      const w = digits[i][bit];
+      if (w) {
+        const item = tables[i][Math.abs(w) - 1 >> 1];
+        acc = acc.add(w < 0 ? item.negate() : item);
+      }
+    }
+  }
+  return acc;
+}
+var ScalarMultiplier = class {
+  Point;
   BASE;
   ZERO;
-  Fn;
+  randomBytes;
+  wnafPrecomputes = /* @__PURE__ */ new WeakMap();
+  baseCanBeBlinded;
   bits;
   // Parametrized with a given Point class (not individual point)
-  constructor(Point2, bits) {
+  constructor(Point2, randomBytes5) {
+    validatePointCons(Point2);
+    this.randomBytes = probeRandomBytes(randomBytes5, BLIND_BYTES);
+    this.Point = Point2;
     this.BASE = Point2.BASE;
     this.ZERO = Point2.ZERO;
-    this.Fn = Point2.Fn;
-    this.bits = bits;
-  }
-  // non-const time multiplication ladder
-  _unsafeLadder(elm, n, p = this.ZERO) {
-    let d = elm;
-    while (n > _0n3) {
-      if (n & _1n3)
-        p = p.add(d);
-      d = d.double();
-      n >>= _1n3;
-    }
-    return p;
+    this.bits = Point2.Fn.BITS;
   }
   /**
-   * Creates a wNAF precomputation window. Used for caching.
-   * Default window size is set by `utils.precompute()` and is equal to 8.
-   * Number of precomputed points depends on the curve size:
-   * 2^(𝑊−1) * (Math.ceil(𝑛 / 𝑊) + 1), where:
-   * - 𝑊 is the window size
-   * - 𝑛 is the bitlength of the curve order.
-   * For a 256-bit curve and window size 8, the number of precomputed points is 128 * 33 = 4224.
+   * Creates a signed fixed-window wNAF precomputation table: for every window w, the
+   * multiples `[1..2^(W−1)]⋅2^(w⋅W)⋅P`, flattened. All doublings are baked into the table,
+   * so cached multiplication is additions-only. `windows = ceil(bits/W) + 1`: the extra
+   * window absorbs the final carry of signed-digit recoding.
+   * For a 256-bit curve and W=6, the table is 44⋅32 = 1408 points.
    * @param point - Point instance
    * @param W - window size
-   * @returns precomputed point tables flattened to a single array
+   * @param bits - scalar bitlength the table must cover
    */
-  precomputeWindow(point, W) {
-    const { windows, windowSize } = calcWOpts(W, this.bits);
-    const points = [];
-    let p = point;
-    let base = p;
-    for (let window = 0; window < windows; window++) {
-      base = p;
-      points.push(base);
-      for (let i = 1; i < windowSize; i++) {
-        base = base.add(p);
-        points.push(base);
+  buildWnafTable(point, W, bits) {
+    const windows = Math.ceil(bits / W) + 1;
+    const half = 2 ** (W - 1);
+    const comp = [];
+    let base = point;
+    for (let w = 0; w < windows; w++) {
+      let acc = base;
+      for (let i = 0; i < half; i++) {
+        comp.push(acc);
+        acc = acc.add(base);
       }
-      p = base.double();
+      base = comp[comp.length - 1].double();
     }
-    return points;
+    return { W, bits, windows, comp };
   }
   /**
-   * Implements ec multiplication using precomputed tables and w-ary non-adjacent form.
-   * More compact implementation:
-   * https://github.com/paulmillr/noble-secp256k1/blob/47cb1669b6e506ad66b35fe7d76132ae97465da2/index.ts#L502-L541
+   * Implements ec multiplication using precomputed signed fixed-window wNAF tables.
+   * Constant-time: fixed window count with one table addition per window — zero digits feed
+   * the fake accumulator — and no doublings; the lookup scans the whole window slice.
+   * Scalar bounds are validated by the public entry points ({@link ScalarMultiplier.mulCT},
+   * {@link ScalarMultiplier.mulCTBlinded}, {@link ScalarMultiplier.mulUnsafe});
+   * signedWindowDigits throws if `n` exceeds the table.
    * @returns real and fake (for const-time) points
    */
-  wNAF(W, precomputes, n) {
-    if (!this.Fn.isValid(n))
-      throw new Error("invalid scalar");
+  wnafCachedCT(precomputes, n) {
+    const { W, windows, comp } = precomputes;
+    const half = 2 ** (W - 1);
+    const digits = signedWindowDigits(n, W, windows);
     let p = this.ZERO;
     let f = this.BASE;
-    const wo = calcWOpts(W, this.bits);
-    for (let window = 0; window < wo.windows; window++) {
-      const { nextN, offset, isZero, isNeg, isNegF, offsetF } = calcOffsets(n, window, wo);
-      n = nextN;
-      if (isZero) {
-        f = f.add(negateCt(isNegF, precomputes[offsetF]));
-      } else {
-        p = p.add(negateCt(isNeg, precomputes[offset]));
-      }
+    for (let w = 0; w < windows; w++) {
+      const digit = digits[w];
+      const start = w * half;
+      const idx = Math.abs(digit) - 1;
+      let sel = comp[start];
+      for (let i = 1; i < half; i++)
+        sel = i === idx ? comp[start + i] : sel;
+      const neg = sel.negate();
+      if (digit === 0)
+        f = f.add(comp[start]);
+      else
+        p = p.add(digit < 0 ? neg : sel);
     }
-    assert0(n);
     return { p, f };
   }
-  /**
-   * Implements unsafe EC multiplication using precomputed tables
-   * and w-ary non-adjacent form.
-   * @param acc - accumulator point to add result of multiplication
-   * @returns point
-   */
-  wNAFUnsafe(W, precomputes, n, acc = this.ZERO) {
-    const wo = calcWOpts(W, this.bits);
-    for (let window = 0; window < wo.windows; window++) {
-      if (n === _0n3)
-        break;
-      const { nextN, offset, isZero, isNeg } = calcOffsets(n, window, wo);
-      n = nextN;
-      if (isZero) {
-        continue;
-      } else {
-        const item = precomputes[offset];
-        acc = acc.add(isNeg ? item.negate() : item);
-      }
-    }
-    assert0(n);
-    return acc;
-  }
-  getPrecomputes(W, point, transform) {
-    let comp = pointPrecomputes.get(point);
+  // Cache key is point identity plus (W, bits); at most two entries exist per point (public-width
+  // `Fn.BITS` and blinded `Fn.BITS + BLIND_BITS`). Callers must not reuse the same point with
+  // incompatible `transform(...)` layouts and expect a separate cache entry.
+  getWnafPrecomputes(W, point, bits, transform) {
+    let entries = this.wnafPrecomputes.get(point);
+    let comp = entries?.find((entry) => entry.W === W && entry.bits === bits);
     if (!comp) {
-      comp = this.precomputeWindow(point, W);
-      if (W !== 1) {
-        if (typeof transform === "function")
-          comp = transform(comp);
-        pointPrecomputes.set(point, comp);
+      comp = this.buildWnafTable(point, W, bits);
+      if (typeof transform === "function")
+        comp = { ...comp, comp: transform(comp.comp) };
+      if (!entries) {
+        entries = [];
+        this.wnafPrecomputes.set(point, entries);
       }
+      entries.push(comp);
     }
     return comp;
   }
-  cached(point, scalar, transform) {
-    const W = getW(point);
-    return this.wNAF(W, this.getPrecomputes(W, point, transform), scalar);
+  assertPoint(point) {
+    if (!(point instanceof this.Point))
+      throw new TypeError('"point" expected Point instance, got type=' + typeof point);
   }
-  unsafe(point, scalar, transform, prev) {
-    const W = getW(point);
+  // Shared prologue of the constant-time entry points. Rejects scalar 0: in key/signature-style
+  // callers a zero scalar means broken upstream plumbing, and concrete Points already reject it.
+  // Uses inRange instead of Fn.isValidNot0: validateField() only certifies the arithmetic subset.
+  validateMulInput(point, scalar) {
+    this.assertPoint(point);
+    if (!inRange(scalar, _1n3, this.Point.Fn.ORDER))
+      throw new Error("invalid scalar");
+  }
+  // Constant-time dispatch shared by mulCT / mulCTBlinded. Un-precomputed points (W===1, e.g.
+  // ECDH peer keys) skip building a throwaway cached table in favor of a small fixed-window
+  // multiply. `n` must be < 2^bits.
+  runCT(point, n, bits, transform) {
+    const W = getWindowSize(point);
     if (W === 1)
-      return this._unsafeLadder(point, scalar, prev);
-    return this.wNAFUnsafe(W, this.getPrecomputes(W, point, transform), scalar, prev);
+      return this.fixedWindowCT(point, n, bits);
+    return this.wnafCachedCT(this.getWnafPrecomputes(W, point, bits, transform), n);
   }
-  // We calculate precomputes for elliptic curve point multiplication
-  // using windowed method. This specifies window size and
-  // stores precomputed values. Usually only base point would be precomputed.
-  createCache(P, W) {
+  mulCT(point, scalar, transform) {
+    this.validateMulInput(point, scalar);
+    return this.runCT(point, scalar, this.bits, transform);
+  }
+  mulCTBlinded(point, scalar, transform) {
+    this.validateMulInput(point, scalar);
+    if (this.randomBytes === void 0)
+      throw new Error("randomBytes is required for scalar blinding");
+    const bits = this.Point.Fn.BITS + BLIND_BITS;
+    const blind = this.randomBytes(BLIND_BYTES);
+    if (!isBytes2(blind) || blind.length !== BLIND_BYTES)
+      throw new Error("randomBytes returned invalid byte array");
+    blind[0] = blind[0] & 63 | 128;
+    const n = scalar + bytesToNumberBE(blind) * this.Point.Fn.ORDER;
+    return this.runCT(point, n, bits, transform);
+  }
+  /**
+   * Constant-time multiplication `n*point` for an un-precomputed point, via a small fixed window.
+   * A cached wNAF table only pays off when reused; a flat 2^FW_WINDOW table (`size-1` adds) is
+   * far cheaper to build for a single use. The point-operation sequence is independent of `n`:
+   * build the table, then per window exactly FW_WINDOW doublings, a data-oblivious scan over
+   * every table entry, and one addition (adds the identity when the window digit is 0 — never
+   * skipped).
+   *
+   * `n` must be `< 2^bits`. Assumes complete addition (adding the identity costs the same as any
+   * add), which holds for the Weierstrass/Edwards point types used here. The table is left in
+   * projective form (no normalizeZ): normalizing this small a table costs more than the
+   * mixed-add savings it would buy for a single multiply.
+   * @returns real point `p`; `f` duplicates it only to match {@link wnafCachedCT}'s return shape
+   * (this path needs no fake accumulator — its op-count is already scalar-independent).
+   */
+  fixedWindowCT(point, n, bits) {
+    const W = FW_WINDOW;
+    const size = 1 << W;
+    const mask = bitMask(W);
+    const table = new Array(size);
+    table[0] = this.ZERO;
+    for (let i = 1; i < size; i++)
+      table[i] = table[i - 1].add(point);
+    const windows = Math.ceil(bits / W);
+    let acc = this.ZERO;
+    for (let window = windows - 1; window >= 0; window--) {
+      if (window !== windows - 1)
+        for (let d = 0; d < W; d++)
+          acc = acc.double();
+      const digit = Number(n >> BigInt(window * W) & mask);
+      let sel = table[0];
+      for (let i = 1; i < size; i++)
+        sel = i === digit ? table[i] : sel;
+      acc = acc.add(sel);
+    }
+    return { p: acc, f: acc };
+  }
+  shouldBlind(point, cofactor) {
+    if (this.randomBytes === void 0)
+      return false;
+    if (cofactor === _1n3)
+      return true;
+    if (point !== this.BASE)
+      return false;
+    if (this.baseCanBeBlinded === void 0)
+      this.baseCanBeBlinded = this.mulUnsafe(this.BASE, this.Point.Fn.ORDER).is0();
+    return this.baseCanBeBlinded;
+  }
+  mulSecret(point, scalar, cofactor, transform) {
+    return this.shouldBlind(point, cofactor) ? this.mulCTBlinded(point, scalar, transform) : this.mulCT(point, scalar, transform);
+  }
+  mulUnsafe(point, scalar, transform) {
+    this.assertPoint(point);
+    if (!isPosBig(scalar))
+      throw new Error("invalid scalar");
+    const W = getWindowSize(point);
+    if (W === 1 || scalar >= this.Point.Fn.ORDER)
+      return mulAddUnsafe(this.Point, [point], [scalar], true);
+    const precomputes = this.getWnafPrecomputes(W, point, this.bits, transform);
+    return this.wnafCachedCT(precomputes, scalar).p;
+  }
+  // Remembers the window size used for precomputed wNAF multiplication of the given point
+  // and drops any previously built tables. Usually only the base point is precomputed.
+  // W=1 resets the point to the un-precomputed (table-less) paths.
+  // W is additionally capped so tables stay under ~2 GiB ({@link TABLE_BYTES_MAX}).
+  setWindowSize(point, W) {
+    this.assertPoint(point);
     validateW(W, this.bits);
-    pointWindowSizes.set(P, W);
-    pointPrecomputes.delete(P);
+    const windows = Math.ceil((this.bits + BLIND_BITS) / W) + 1;
+    validateTableBytes(windows * 2 ** (W - 1), this.Point.Fp.BYTES);
+    pointWindowSizes.set(point, W);
+    this.wnafPrecomputes.delete(point);
   }
-  hasCache(elm) {
-    return getW(elm) !== 1;
+  // True when a window size is set: tables themselves are built lazily on first multiply.
+  hasWindowSize(point) {
+    return getWindowSize(point) !== 1;
   }
 };
-function mulEndoUnsafe(Point2, point, k1, k2) {
-  let acc = point;
-  let p1 = Point2.ZERO;
-  let p2 = Point2.ZERO;
-  while (k1 > _0n3 || k2 > _0n3) {
-    if (k1 & _1n3)
-      p1 = p1.add(acc);
-    if (k2 & _1n3)
-      p2 = p2.add(acc);
-    acc = acc.double();
-    k1 >>= _1n3;
-    k2 >>= _1n3;
-  }
-  return { p1, p2 };
+function mulAddUnsafe(c, points, scalars, allowOversized = false) {
+  validatePointCons(c);
+  validateMSMPoints(points, c);
+  abool2(allowOversized, "allowOversized");
+  validateMSMScalars(scalars, c.Fn, allowOversized ? c.Fn.ORDER ** _4n2 : void 0);
+  if (points.length !== scalars.length)
+    throw new Error("arrays of points and scalars must have equal length");
+  const tables = points.map((p) => oddMultiples(p, 4));
+  const digits = scalars.map((n) => wnafDigits(n, 4));
+  return wnafWalk(c.ZERO, tables, digits);
 }
 function createField(order, field, isLE2) {
   if (field) {
@@ -1505,13 +1775,16 @@ function createField(order, field, isLE2) {
   }
 }
 function createCurveFields(type, CURVE, curveOpts = {}, FpFnLE) {
+  if (type !== "weierstrass" && type !== "edwards")
+    throw new Error('expected curve type "weierstrass" or "edwards"');
   if (FpFnLE === void 0)
     FpFnLE = type === "edwards";
   if (!CURVE || typeof CURVE !== "object")
     throw new Error(`expected valid ${type} CURVE object`);
+  validateObject(curveOpts);
   for (const p of ["p", "n", "h"]) {
     const val = CURVE[p];
-    if (!(typeof val === "bigint" && val > _0n3))
+    if (!(isPosBig(val) && val !== _0n3))
       throw new Error(`CURVE.${p} must be positive bigint`);
   }
   const Fp = createField(CURVE.p, curveOpts.Fp, FpFnLE);
@@ -1546,7 +1819,7 @@ var _HMAC = class {
     abytes(key, void 0, "key");
     this.iHash = hash.create();
     if (typeof this.iHash.update !== "function")
-      throw new Error("Expected instance of class which extends utils.Hash");
+      throw new Error("expected Hash instance");
     this.blockLen = this.iHash.blockLen;
     this.outputLen = this.iHash.outputLen;
     const blockLen = this.blockLen;
@@ -1583,12 +1856,13 @@ var _HMAC = class {
   }
   _cloneInto(to) {
     to ||= Object.create(Object.getPrototypeOf(this), {});
-    const { oHash, iHash, finished, destroyed, blockLen, outputLen } = this;
+    const { oHash, iHash, finished, destroyed, blockLen, outputLen, canXOF } = this;
     to = to;
     to.finished = finished;
     to.destroyed = destroyed;
     to.blockLen = blockLen;
     to.outputLen = outputLen;
+    to.canXOF = canXOF;
     to.oHash = oHash._cloneInto(to.oHash);
     to.iHash = iHash._cloneInto(to.iHash);
     return to;
@@ -1603,66 +1877,29 @@ var _HMAC = class {
   }
 };
 var hmac = /* @__PURE__ */ (() => {
-  const hmac_ = (hash, key, message) => new _HMAC(hash, key).update(message).digest();
+  const hmac_ = ((hash, key, message) => new _HMAC(hash, key).update(message).digest());
   hmac_.create = (hash, key) => new _HMAC(hash, key);
   return hmac_;
 })();
 
-// node_modules/@noble/curves/abstract/weierstrass.js
-var divNearest = (num, den) => (num + (num >= 0 ? den : -den) / _2n2) / den;
-function _splitEndoScalar(k, basis, n) {
-  aInRange("scalar", k, _0n4, n);
-  const [[a1, b1], [a2, b2]] = basis;
-  const c1 = divNearest(b2 * k, n);
-  const c2 = divNearest(-b1 * k, n);
-  let k1 = k - c1 * a1 - c2 * a2;
-  let k2 = -c1 * b1 - c2 * b2;
-  const k1neg = k1 < _0n4;
-  const k2neg = k2 < _0n4;
-  if (k1neg)
-    k1 = -k1;
-  if (k2neg)
-    k2 = -k2;
-  const MAX_NUM = bitMask(Math.ceil(bitLen(n) / 2)) + _1n4;
-  if (k1 < _0n4 || k1 >= MAX_NUM || k2 < _0n4 || k2 >= MAX_NUM) {
-    throw new Error("splitScalar (endomorphism): failed for k");
-  }
-  return { k1neg, k1, k2neg, k2 };
-}
-function validateSigFormat(format) {
-  if (!["compact", "recovered", "der"].includes(format))
-    throw new Error('Signature format must be "compact", "recovered", or "der"');
-  return format;
-}
-function validateSigOpts(opts, def) {
-  validateObject(opts);
-  const optsn = {};
-  for (let optName of Object.keys(def)) {
-    optsn[optName] = opts[optName] === void 0 ? def[optName] : opts[optName];
-  }
-  abool(optsn.lowS, "lowS");
-  abool(optsn.prehash, "prehash");
-  if (optsn.format !== void 0)
-    validateSigFormat(optsn.format);
-  return optsn;
-}
+// node_modules/@noble/curves/abstract/der.js
+var _0n4 = /* @__PURE__ */ BigInt(0);
 var DERErr = class extends Error {
   constructor(m = "") {
     super(m);
   }
 };
-var DER = {
+var _DER = {
   // asn.1 DER encoding utils
   Err: DERErr,
   // Basic building block is TLV (Tag-Length-Value)
   _tlv: {
     encode: (tag, data) => {
-      const { Err: E } = DER;
+      const { Err: E } = _DER;
       asafenumber(tag, "tag");
       if (tag < 0 || tag > 255)
         throw new E("tlv.encode: wrong tag");
-      if (typeof data !== "string")
-        throw new TypeError('"data" expected string, got type=' + typeof data);
+      astring(data, "data");
       if (data.length & 1)
         throw new E("tlv.encode: unpadded data");
       const dataLen = data.length / 2;
@@ -1675,11 +1912,11 @@ var DER = {
     },
     // v - value, l - left bytes (unparsed)
     decode(tag, data) {
-      const { Err: E } = DER;
+      const { Err: E } = _DER;
       data = abytes2(data, void 0, "DER data");
       let pos = 0;
       if (tag < 0 || tag > 255)
-        throw new E("tlv.encode: wrong tag");
+        throw new E("tlv.decode: wrong tag");
       if (data.length < 2 || data[pos++] !== tag)
         throw new E("tlv.decode: wrong tlv");
       const first = data[pos++];
@@ -1716,7 +1953,7 @@ var DER = {
   // - if next byte doesn't have a flag, leading zero is not allowed (minimal encoding)
   _int: {
     encode(num) {
-      const { Err: E } = DER;
+      const { Err: E } = _DER;
       abignumber(num);
       if (num < _0n4)
         throw new E("integer: negative integers are not allowed");
@@ -1728,7 +1965,7 @@ var DER = {
       return hex;
     },
     decode(data) {
-      const { Err: E } = DER;
+      const { Err: E } = _DER;
       if (data.length < 1)
         throw new E("invalid signature integer: empty");
       if (data[0] & 128)
@@ -1739,7 +1976,7 @@ var DER = {
     }
   },
   toSig(bytes) {
-    const { Err: E, _int: int, _tlv: tlv } = DER;
+    const { Err: E, _int: int, _tlv: tlv } = _DER;
     const data = abytes2(bytes, void 0, "signature");
     const { v: seqBytes, l: seqLeftBytes } = tlv.decode(48, data);
     if (seqLeftBytes.length)
@@ -1751,21 +1988,63 @@ var DER = {
     return { r: int.decode(rBytes), s: int.decode(sBytes) };
   },
   hexFromSig(sig) {
-    const { _tlv: tlv, _int: int } = DER;
+    const { _tlv: tlv, _int: int } = _DER;
+    validateObject(sig, { r: "bigint", s: "bigint" }, {}, "sig");
     const rs = tlv.encode(2, int.encode(sig.r));
     const ss = tlv.encode(2, int.encode(sig.s));
     const seq = rs + ss;
     return tlv.encode(48, seq);
   }
 };
-Object.freeze(DER._tlv);
-Object.freeze(DER._int);
-Object.freeze(DER);
-var _0n4 = /* @__PURE__ */ BigInt(0);
+var DER = /* @__PURE__ */ (() => {
+  Object.freeze(_DER._tlv);
+  Object.freeze(_DER._int);
+  return Object.freeze(_DER);
+})();
+
+// node_modules/@noble/curves/abstract/weierstrass.js
+var divNearest = (num, den) => (num + (num >= 0 ? den : -den) / _2n2) / den;
+function _splitEndoScalar(k, basis, n) {
+  aInRange("scalar", k, _0n5, n);
+  const [[a1, b1], [a2, b2]] = basis;
+  const c1 = divNearest(b2 * k, n);
+  const c2 = divNearest(-b1 * k, n);
+  let k1 = k - c1 * a1 - c2 * a2;
+  let k2 = -c1 * b1 - c2 * b2;
+  const k1neg = k1 < _0n5;
+  const k2neg = k2 < _0n5;
+  if (k1neg)
+    k1 = -k1;
+  if (k2neg)
+    k2 = -k2;
+  const MAX_NUM = bitMask(Math.ceil(bitLen(n) / 2)) + _1n4;
+  if (k1 < _0n5 || k1 >= MAX_NUM || k2 < _0n5 || k2 >= MAX_NUM) {
+    throw new Error("splitScalar (endomorphism): failed for k");
+  }
+  return { k1neg, k1, k2neg, k2 };
+}
+function validateSigFormat(format) {
+  if (!["compact", "recovered", "der"].includes(format))
+    throw new Error('Signature format must be "compact", "recovered", or "der"');
+  return format;
+}
+function validateSigOpts(opts, def) {
+  validateObject(opts);
+  const optsn = {};
+  for (let optName of Object.keys(def)) {
+    optsn[optName] = opts[optName] === void 0 ? def[optName] : opts[optName];
+  }
+  abool2(optsn.lowS, "lowS");
+  abool2(optsn.prehash, "prehash");
+  if (optsn.format !== void 0)
+    validateSigFormat(optsn.format);
+  return optsn;
+}
+var _0n5 = /* @__PURE__ */ BigInt(0);
 var _1n4 = /* @__PURE__ */ BigInt(1);
 var _2n2 = /* @__PURE__ */ BigInt(2);
 var _3n2 = /* @__PURE__ */ BigInt(3);
-var _4n2 = /* @__PURE__ */ BigInt(4);
+var _4n3 = /* @__PURE__ */ BigInt(4);
 function weierstrass(params, extraOpts = {}) {
   const validated = createCurveFields("weierstrass", params, extraOpts);
   const Fp = validated.Fp;
@@ -1778,9 +2057,11 @@ function weierstrass(params, extraOpts = {}) {
     isTorsionFree: "function",
     fromBytes: "function",
     toBytes: "function",
-    endo: "object"
+    endo: "object",
+    randomBytes: "function"
   });
   const { endo, allowInfinityPoint } = extraOpts;
+  const randomBytes5 = extraOpts.randomBytes === void 0 ? randomBytes2 : extraOpts.randomBytes;
   if (endo) {
     if (!Fp.is0(CURVE.a) || typeof endo.beta !== "bigint" || !Array.isArray(endo.basises)) {
       throw new Error('invalid endo: expected "beta": bigint and "basises": array');
@@ -1796,7 +2077,7 @@ function weierstrass(params, extraOpts = {}) {
       return Uint8Array.of(0);
     const { x, y } = point.toAffine();
     const bx = Fp.toBytes(x);
-    abool(isCompressed, "isCompressed");
+    abool2(isCompressed, "isCompressed");
     if (isCompressed) {
       assertCompressionIsSupported();
       const hasEvenY = !Fp.isOdd(y);
@@ -1844,6 +2125,8 @@ function weierstrass(params, extraOpts = {}) {
   }
   const encodePoint = extraOpts.toBytes === void 0 ? pointToBytes : extraOpts.toBytes;
   const decodePoint = extraOpts.fromBytes === void 0 ? pointFromBytes : extraOpts.fromBytes;
+  const b3 = Fp.mul(CURVE.b, _3n2);
+  const mulA = Fp.is0(CURVE.a) ? (_) => Fp.ZERO : (x) => Fp.mul(CURVE.a, x);
   function weierstrassEquation(x) {
     const x2 = Fp.sqr(x);
     const x3 = Fp.mul(x2, x);
@@ -1856,7 +2139,7 @@ function weierstrass(params, extraOpts = {}) {
   }
   if (!isValidXY(CURVE.Gx, CURVE.Gy))
     throw new Error("bad curve params: generator point");
-  const _4a3 = Fp.mul(Fp.pow(CURVE.a, _3n2), _4n2);
+  const _4a3 = Fp.mul(Fp.pow(CURVE.a, _3n2), _4n3);
   const _27b2 = Fp.mul(Fp.sqr(CURVE.b), BigInt(27));
   if (Fp.is0(Fp.add(_4a3, _27b2)))
     throw new Error("bad curve params: a or b");
@@ -1874,21 +2157,24 @@ function weierstrass(params, extraOpts = {}) {
       throw new Error("no endo");
     return _splitEndoScalar(k, endo.basises, Fn2.ORDER);
   }
-  function finishEndo(endoBeta, k1p, k2p, k1neg, k2neg) {
-    k2p = new Point2(Fp.mul(k2p.X, endoBeta), k2p.Y, k2p.Z);
-    k1p = negateCt(k1neg, k1p);
-    k2p = negateCt(k2neg, k2p);
-    return k1p.add(k2p);
+  function pushWnafPair(points, scalars, p, k) {
+    if (!Fn2.isValid(k))
+      throw new RangeError("invalid scalar: out of range");
+    if (endo) {
+      const { k1neg, k1, k2neg, k2 } = splitEndoScalarN(k);
+      const psi = new Point2(Fp.mul(p.X, endo.beta), p.Y, p.Z);
+      points.push(k1neg ? p.negate() : p, k2neg ? psi.negate() : psi);
+      scalars.push(k1, k2);
+    } else {
+      points.push(p);
+      scalars.push(k);
+    }
   }
+  const validityCache = /* @__PURE__ */ new WeakSet();
   class Point2 {
-    // base / generator point
     static BASE = new Point2(CURVE.Gx, CURVE.Gy, Fp.ONE);
-    // zero / infinity / identity point
     static ZERO = new Point2(Fp.ZERO, Fp.ONE, Fp.ZERO);
-    // 0, 1, 0
-    // math field
     static Fp = Fp;
-    // scalar field
     static Fn = Fn2;
     X;
     Y;
@@ -1929,13 +2215,10 @@ function weierstrass(params, extraOpts = {}) {
       return this.toAffine().y;
     }
     /**
-     *
-     * @param windowSize
      * @param isLazy - true will defer table computation until the first multiplication
-     * @returns
      */
-    precompute(windowSize = 8, isLazy = true) {
-      wnaf.createCache(this, windowSize);
+    precompute(windowSize = 6, isLazy = true) {
+      wnaf.setWindowSize(this, windowSize);
       if (!isLazy)
         this.multiply(_3n2);
       return this;
@@ -1949,6 +2232,8 @@ function weierstrass(params, extraOpts = {}) {
           return;
         throw new Error("bad point: ZERO");
       }
+      if (validityCache.has(p))
+        return;
       const { x, y } = p.toAffine();
       if (!Fp.isValid(x) || !Fp.isValid(y))
         throw new Error("bad point: x or y not field elements");
@@ -1956,6 +2241,7 @@ function weierstrass(params, extraOpts = {}) {
         throw new Error("bad point: equation left != right");
       if (!p.isTorsionFree())
         throw new Error("bad point: not in prime-order subgroup");
+      validityCache.add(p);
     }
     hasEvenY() {
       const { y } = this.toAffine();
@@ -1981,8 +2267,6 @@ function weierstrass(params, extraOpts = {}) {
     // https://eprint.iacr.org/2015/1060, algorithm 3
     // Cost: 8M + 3S + 3*a + 2*b3 + 15add.
     double() {
-      const { a, b } = CURVE;
-      const b3 = Fp.mul(b, _3n2);
       const { X: X1, Y: Y1, Z: Z1 } = this;
       let X3 = Fp.ZERO, Y3 = Fp.ZERO, Z3 = Fp.ZERO;
       let t0 = Fp.mul(X1, X1);
@@ -1992,7 +2276,7 @@ function weierstrass(params, extraOpts = {}) {
       t3 = Fp.add(t3, t3);
       Z3 = Fp.mul(X1, Z1);
       Z3 = Fp.add(Z3, Z3);
-      X3 = Fp.mul(a, Z3);
+      X3 = mulA(Z3);
       Y3 = Fp.mul(b3, t2);
       Y3 = Fp.add(X3, Y3);
       X3 = Fp.sub(t1, Y3);
@@ -2000,9 +2284,9 @@ function weierstrass(params, extraOpts = {}) {
       Y3 = Fp.mul(X3, Y3);
       X3 = Fp.mul(t3, X3);
       Z3 = Fp.mul(b3, Z3);
-      t2 = Fp.mul(a, t2);
+      t2 = mulA(t2);
       t3 = Fp.sub(t0, t2);
-      t3 = Fp.mul(a, t3);
+      t3 = mulA(t3);
       t3 = Fp.add(t3, Z3);
       Z3 = Fp.add(t0, t0);
       t0 = Fp.add(Z3, t0);
@@ -2027,8 +2311,6 @@ function weierstrass(params, extraOpts = {}) {
       const { X: X1, Y: Y1, Z: Z1 } = this;
       const { X: X2, Y: Y2, Z: Z2 } = other;
       let X3 = Fp.ZERO, Y3 = Fp.ZERO, Z3 = Fp.ZERO;
-      const a = CURVE.a;
-      const b3 = Fp.mul(CURVE.b, _3n2);
       let t0 = Fp.mul(X1, X2);
       let t1 = Fp.mul(Y1, Y2);
       let t2 = Fp.mul(Z1, Z2);
@@ -2047,7 +2329,7 @@ function weierstrass(params, extraOpts = {}) {
       t5 = Fp.mul(t5, X3);
       X3 = Fp.add(t1, t2);
       t5 = Fp.sub(t5, X3);
-      Z3 = Fp.mul(a, t4);
+      Z3 = mulA(t4);
       X3 = Fp.mul(b3, t2);
       Z3 = Fp.add(X3, Z3);
       X3 = Fp.sub(t1, Z3);
@@ -2055,11 +2337,11 @@ function weierstrass(params, extraOpts = {}) {
       Y3 = Fp.mul(X3, Z3);
       t1 = Fp.add(t0, t0);
       t1 = Fp.add(t1, t0);
-      t2 = Fp.mul(a, t2);
+      t2 = mulA(t2);
       t4 = Fp.mul(b3, t4);
       t1 = Fp.add(t1, t2);
       t2 = Fp.sub(t0, t2);
-      t2 = Fp.mul(a, t2);
+      t2 = mulA(t2);
       t4 = Fp.add(t4, t2);
       t0 = Fp.mul(t1, t4);
       Y3 = Fp.add(Y3, t0);
@@ -2080,56 +2362,53 @@ function weierstrass(params, extraOpts = {}) {
     }
     /**
      * Constant time multiplication.
-     * Uses wNAF method. Windowed method may be 10% faster,
-     * but takes 2x longer to generate and consumes 2x memory.
-     * Uses precomputes when available.
-     * Uses endomorphism for Koblitz curves.
+     * Uses precomputed tables (signed fixed-window wNAF) when available.
+     * Uses scalar blinding and avoids endomorphism splitting in the secret-scalar path.
      * @param scalar - by which the point would be multiplied
      * @returns New point
      */
     multiply(scalar) {
-      const { endo: endo2 } = extraOpts;
       if (!Fn2.isValidNot0(scalar))
         throw new RangeError("invalid scalar: out of range");
-      let point, fake;
-      const mul = (n) => wnaf.cached(this, n, (p) => normalizeZ(Point2, p));
-      if (endo2) {
-        const { k1neg, k1, k2neg, k2 } = splitEndoScalarN(scalar);
-        const { p: k1p, f: k1f } = mul(k1);
-        const { p: k2p, f: k2f } = mul(k2);
-        fake = k1f.add(k2f);
-        point = finishEndo(endo2.beta, k1p, k2p, k1neg, k2neg);
-      } else {
-        const { p, f } = mul(scalar);
-        point = p;
-        fake = f;
-      }
-      return normalizeZ(Point2, [point, fake])[0];
+      const { p, f } = wnaf.mulSecret(this, scalar, cofactor, normalize2);
+      return normalize2([p, f])[0];
     }
     /**
-     * Non-constant-time multiplication. Uses double-and-add algorithm.
+     * Non-constant-time multiplication. Uses width-4 wNAF with GLV endomorphism splitting
+     * when available (two half-width scalars sharing one halved doubling chain).
      * It's faster, but should only be used when you don't care about
      * an exposed secret key e.g. sig verification, which works over *public* keys.
      */
     multiplyUnsafe(scalar) {
-      const { endo: endo2 } = extraOpts;
       const p = this;
       const sc = scalar;
       if (!Fn2.isValid(sc))
         throw new RangeError("invalid scalar: out of range");
-      if (sc === _0n4 || p.is0())
+      if (sc === _0n5 || p.is0())
         return Point2.ZERO;
       if (sc === _1n4)
         return p;
-      if (wnaf.hasCache(this))
-        return this.multiply(sc);
-      if (endo2) {
-        const { k1neg, k1, k2neg, k2 } = splitEndoScalarN(sc);
-        const { p1, p2 } = mulEndoUnsafe(Point2, p, k1, k2);
-        return finishEndo(endo2.beta, p1, p2, k1neg, k2neg);
-      } else {
-        return wnaf.unsafe(p, sc);
-      }
+      if (wnaf.hasWindowSize(this))
+        return wnaf.mulUnsafe(p, sc, normalize2);
+      const points = [];
+      const scalars = [];
+      pushWnafPair(points, scalars, p, sc);
+      return mulAddUnsafe(Point2, points, scalars);
+    }
+    /**
+     * Non-constant-time double-scalar multiplication `a⋅this + b⋅other` (Strauss–Shamir).
+     * Both walks share one doubling chain via {@link mulAddUnsafe}, and GLV endomorphism
+     * (when available) halves the chain again by splitting each scalar into two half-width
+     * parts. Used by ECDSA verification and public-key recovery for `R = u1⋅G + u2⋅P`.
+     * Only for public scalars.
+     */
+    mulAddUnsafe(a, other, b) {
+      aprjpoint(other);
+      const points = [];
+      const scalars = [];
+      pushWnafPair(points, scalars, this, a);
+      pushWnafPair(points, scalars, other, b);
+      return mulAddUnsafe(Point2, points, scalars);
     }
     /**
      * Converts Projective point to affine (x, y) coordinates.
@@ -2139,6 +2418,8 @@ function weierstrass(params, extraOpts = {}) {
     toAffine(invertedZ) {
       const p = this;
       let iz = invertedZ;
+      if (iz != null && !Fp.isValid(iz))
+        throw new RangeError('"invertedZ" expected valid field element');
       const { X, Y, Z } = p;
       if (Fp.eql(Z, Fp.ONE))
         return { x: X, y: Y };
@@ -2164,7 +2445,7 @@ function weierstrass(params, extraOpts = {}) {
         return true;
       if (isTorsionFree)
         return isTorsionFree(Point2, this);
-      return wnaf.unsafe(this, CURVE_ORDER).is0();
+      return wnaf.mulUnsafe(this, CURVE_ORDER).is0();
     }
     clearCofactor() {
       const { clearCofactor } = extraOpts;
@@ -2180,7 +2461,7 @@ function weierstrass(params, extraOpts = {}) {
       return this.clearCofactor().is0();
     }
     toBytes(isCompressed = true) {
-      abool(isCompressed, "isCompressed");
+      abool2(isCompressed, "isCompressed");
       this.assertValidity();
       return encodePoint(Point2, this, isCompressed);
     }
@@ -2191,10 +2472,10 @@ function weierstrass(params, extraOpts = {}) {
       return `<Point ${this.is0() ? "ZERO" : this.toHex()}>`;
     }
   }
-  const bits = Fn2.BITS;
-  const wnaf = new wNAF(Point2, extraOpts.endo ? Math.ceil(bits / 2) : bits);
-  if (bits >= 8)
-    Point2.BASE.precompute(8);
+  const normalize2 = (points) => normalizeZ(Point2, points);
+  const wnaf = new ScalarMultiplier(Point2, randomBytes5);
+  if (wnaf.bits >= 6)
+    Point2.BASE.precompute(6);
   Object.freeze(Point2.prototype);
   Object.freeze(Point2);
   return Point2;
@@ -2214,6 +2495,7 @@ function getWLengths(Fp, Fn2) {
   };
 }
 function ecdh(Point2, ecdhOpts = {}) {
+  validatePointCons(Point2);
   const { Fn: Fn2 } = Point2;
   const randomBytes_ = ecdhOpts.randomBytes === void 0 ? randomBytes2 : ecdhOpts.randomBytes;
   const lengths = Object.assign(getWLengths(Point2.Fp, Fn2), {
@@ -2268,17 +2550,18 @@ function ecdh(Point2, ecdhOpts = {}) {
     const b = Point2.fromBytes(publicKeyB);
     return b.multiply(s).toBytes(isCompressed);
   }
-  const utils2 = {
+  const utils = {
     isValidSecretKey,
     isValidPublicKey,
     randomSecretKey
   };
   const keygen = createKeygen(randomSecretKey, getPublicKey);
-  Object.freeze(utils2);
+  Object.freeze(utils);
   Object.freeze(lengths);
-  return Object.freeze({ getPublicKey, getSharedSecret, keygen, Point: Point2, utils: utils2, lengths });
+  return Object.freeze({ getPublicKey, getSharedSecret, keygen, Point: Point2, utils, lengths });
 }
 function ecdsa(Point2, hash, ecdsaOpts = {}) {
+  validatePointCons(Point2);
   const hash_ = hash;
   ahash(hash_);
   validateObject(ecdsaOpts, {}, {
@@ -2288,15 +2571,17 @@ function ecdsa(Point2, hash, ecdsaOpts = {}) {
     bits2int: "function",
     bits2int_modN: "function"
   });
-  ecdsaOpts = Object.assign({}, ecdsaOpts);
-  const randomBytes5 = ecdsaOpts.randomBytes === void 0 ? randomBytes2 : ecdsaOpts.randomBytes;
-  const hmac2 = ecdsaOpts.hmac === void 0 ? (key, msg) => hmac(hash_, key, msg) : ecdsaOpts.hmac;
+  const opts = Object.assign({}, ecdsaOpts);
+  const randomBytes5 = opts.randomBytes === void 0 ? randomBytes2 : opts.randomBytes;
+  const hmac2 = opts.hmac === void 0 ? (key, msg) => hmac(hash_, key, msg) : opts.hmac;
   const { Fp, Fn: Fn2 } = Point2;
   const { ORDER: CURVE_ORDER, BITS: fnBits } = Fn2;
-  const { keygen, getPublicKey, getSharedSecret, utils: utils2, lengths } = ecdh(Point2, ecdsaOpts);
+  const blindLength = getMinHashLength(CURVE_ORDER);
+  const csprng = probeRandomBytes(randomBytes5, blindLength);
+  const { keygen, getPublicKey, getSharedSecret, utils, lengths } = ecdh(Point2, opts);
   const defaultSigOpts = {
     prehash: true,
-    lowS: typeof ecdsaOpts.lowS === "boolean" ? ecdsaOpts.lowS : true,
+    lowS: typeof opts.lowS === "boolean" ? opts.lowS : true,
     format: "compact",
     extraEntropy: false
   };
@@ -2309,6 +2594,14 @@ function ecdsa(Point2, hash, ecdsaOpts = {}) {
     if (!Fn2.isValidNot0(num))
       throw new Error(`invalid signature ${title}: out of range 1..Point.Fn.ORDER`);
     return num;
+  }
+  function assertFieldSignIsSupported() {
+    if (!Fp.isOdd)
+      throw new Error("Field doesn't support isOdd");
+  }
+  function getRecoveryBit(x, y, r) {
+    assertFieldSignIsSupported();
+    return (x === r ? 0 : 2) | Number(Fp.isOdd(y));
   }
   function assertRecoverableCurve() {
     if (hasLargeRecoveryLifts)
@@ -2378,7 +2671,7 @@ function ecdsa(Point2, hash, ecdsaOpts = {}) {
       const h = bits2int_modN(abytes2(messageHash, void 0, "msgHash"));
       const u1 = Fn2.create(-h * ir);
       const u2 = Fn2.create(s * ir);
-      const Q = Point2.BASE.multiplyUnsafe(u1).add(R.multiplyUnsafe(u2));
+      const Q = Point2.BASE.mulAddUnsafe(u1, R, u2);
       if (Q.is0())
         throw new Error("invalid recovery: point at infinify");
       Q.assertValidity();
@@ -2407,27 +2700,27 @@ function ecdsa(Point2, hash, ecdsaOpts = {}) {
   }
   Object.freeze(Signature.prototype);
   Object.freeze(Signature);
-  const bits2int = ecdsaOpts.bits2int === void 0 ? function bits2int_def(bytes) {
+  const bits2int = opts.bits2int === void 0 ? function bits2int_def(bytes) {
     if (bytes.length > 8192)
       throw new Error("input is too large");
     const num = bytesToNumberBE(bytes);
     const delta = bytes.length * 8 - fnBits;
     return delta > 0 ? num >> BigInt(delta) : num;
-  } : ecdsaOpts.bits2int;
-  const bits2int_modN = ecdsaOpts.bits2int_modN === void 0 ? function bits2int_modN_def(bytes) {
+  } : opts.bits2int;
+  const bits2int_modN = opts.bits2int_modN === void 0 ? function bits2int_modN_def(bytes) {
     return Fn2.create(bits2int(bytes));
-  } : ecdsaOpts.bits2int_modN;
+  } : opts.bits2int_modN;
   const ORDER_MASK = bitMask(fnBits);
   function int2octets(num) {
-    aInRange("num < 2^" + fnBits, num, _0n4, ORDER_MASK);
+    aInRange("num < 2^" + fnBits, num, _0n5, ORDER_MASK);
     return Fn2.toBytes(num);
   }
   function validateMsgAndHash(message, prehash) {
     abytes2(message, void 0, "message");
     return prehash ? abytes2(hash_(message), void 0, "prehashed message") : message;
   }
-  function prepSig(message, secretKey, opts) {
-    const { lowS, prehash, extraEntropy } = validateSigOpts(opts, defaultSigOpts);
+  function prepSig(message, secretKey, opts2) {
+    const { lowS, prehash, extraEntropy } = validateSigOpts(opts2, defaultSigOpts);
     message = validateMsgAndHash(message, prehash);
     const h1int = bits2int_modN(message);
     const d = Fn2.fromBytes(secretKey);
@@ -2444,15 +2737,24 @@ function ecdsa(Point2, hash, ecdsaOpts = {}) {
       const k = bits2int(kBytes);
       if (!Fn2.isValidNot0(k))
         return;
-      const ik = Fn2.inv(k);
       const q = Point2.BASE.multiply(k).toAffine();
       const r = Fn2.create(q.x);
-      if (r === _0n4)
+      if (r === _0n5)
         return;
-      const s = Fn2.create(ik * Fn2.create(m + r * d));
-      if (s === _0n4)
+      let s;
+      if (csprng !== void 0) {
+        const b = bytesToNumberBE(mapHashToField(csprng(blindLength), CURVE_ORDER));
+        const ibk = Fn2.inv(Fn2.mul(b, k));
+        const bm = Fn2.mul(b, m);
+        const bd = Fn2.mul(b, d);
+        s = Fn2.create(ibk * Fn2.create(bm + bd * r));
+      } else {
+        const ik = invertCt(k, CURVE_ORDER);
+        s = Fn2.create(ik * Fn2.create(m + r * d));
+      }
+      if (s === _0n5)
         return;
-      let recovery = (q.x === r ? 0 : 2) | Number(q.y & _1n4);
+      let recovery = getRecoveryBit(q.x, q.y, r);
       let normS = s;
       if (lowS && isBiggerThanHalfOrder(s)) {
         normS = Fn2.neg(s);
@@ -2462,14 +2764,14 @@ function ecdsa(Point2, hash, ecdsaOpts = {}) {
     }
     return { seed, k2sig };
   }
-  function sign(message, secretKey, opts = {}) {
-    const { seed, k2sig } = prepSig(message, secretKey, opts);
+  function sign(message, secretKey, opts2 = {}) {
+    const { seed, k2sig } = prepSig(message, secretKey, opts2);
     const drbg = createHmacDrbg(hash_.outputLen, Fn2.BYTES, hmac2);
     const sig = drbg(seed, k2sig);
-    return sig.toBytes(opts.format);
+    return sig.toBytes(opts2.format);
   }
-  function verify2(signature, message, publicKey, opts = {}) {
-    const { lowS, prehash, format } = validateSigOpts(opts, defaultSigOpts);
+  function verify2(signature, message, publicKey, opts2 = {}) {
+    const { lowS, prehash, format } = validateSigOpts(opts2, defaultSigOpts);
     publicKey = abytes2(publicKey, void 0, "publicKey");
     message = validateMsgAndHash(message, prehash);
     if (!isBytes2(signature)) {
@@ -2487,17 +2789,22 @@ function ecdsa(Point2, hash, ecdsaOpts = {}) {
       const is = Fn2.inv(s);
       const u1 = Fn2.create(h * is);
       const u2 = Fn2.create(r * is);
-      const R = Point2.BASE.multiplyUnsafe(u1).add(P.multiplyUnsafe(u2));
+      const R = Point2.BASE.mulAddUnsafe(u1, P, u2);
       if (R.is0())
         return false;
-      const v = Fn2.create(R.x);
-      return v === r;
+      const q = R.toAffine();
+      const v = Fn2.create(q.x);
+      if (v !== r)
+        return false;
+      if (format === "recovered" && sig.recovery !== getRecoveryBit(q.x, q.y, r))
+        return false;
+      return true;
     } catch (e) {
       return false;
     }
   }
-  function recoverPublicKey(signature, message, opts = {}) {
-    const { prehash } = validateSigOpts(opts, defaultSigOpts);
+  function recoverPublicKey(signature, message, opts2 = {}) {
+    const { prehash } = validateSigOpts(opts2, defaultSigOpts);
     message = validateMsgAndHash(message, prehash);
     return Signature.fromBytes(signature, "recovered").recoverPublicKey(message).toBytes();
   }
@@ -2505,7 +2812,7 @@ function ecdsa(Point2, hash, ecdsaOpts = {}) {
     keygen,
     getPublicKey,
     getSharedSecret,
-    utils: utils2,
+    utils,
     lengths,
     Point: Point2,
     sign,
@@ -2556,7 +2863,7 @@ function sqrtMod(y) {
     throw new Error("Cannot find square root");
   return root;
 }
-var Fpk1 = Field(secp256k1_CURVE.p, { sqrt: sqrtMod });
+var Fpk1 = /* @__PURE__ */ Field(secp256k1_CURVE.p, { sqrt: sqrtMod });
 var Pointk1 = /* @__PURE__ */ weierstrass(secp256k1_CURVE, {
   Fp: Fpk1,
   endo: secp256k1_ENDO
@@ -2564,7 +2871,7 @@ var Pointk1 = /* @__PURE__ */ weierstrass(secp256k1_CURVE, {
 var secp256k1 = /* @__PURE__ */ ecdsa(Pointk1, sha256);
 
 // node_modules/@noble/hashes/sha3.js
-var _0n5 = BigInt(0);
+var _0n6 = BigInt(0);
 var _1n5 = BigInt(1);
 var _2n4 = BigInt(2);
 var _7n2 = BigInt(7);
@@ -2577,7 +2884,7 @@ for (let round = 0, R = _1n5, x = 1, y = 0; round < 24; round++) {
   [x, y] = [y, (2 * x + 3 * y) % 5];
   SHA3_PI.push(2 * (5 * y + x));
   SHA3_ROTL.push((round + 1) * (round + 2) / 2 % 64);
-  let t = _0n5;
+  let t = _0n6;
   for (let j = 0; j < 7; j++) {
     R = (R << _1n5 ^ (R >> _7n2) * _0x71n) % _256n;
     if (R & _2n4)
@@ -2588,13 +2895,21 @@ for (let round = 0, R = _1n5, x = 1, y = 0; round < 24; round++) {
 var IOTAS = split(_SHA3_IOTA, true);
 var SHA3_IOTA_H = IOTAS[0];
 var SHA3_IOTA_L = IOTAS[1];
+var rotlSH = (h, l, s) => h << s | l >>> 32 - s;
+var rotlSL = (h, l, s) => l << s | h >>> 32 - s;
+var rotlBH = (h, l, s) => l << s - 32 | h >>> 64 - s;
+var rotlBL = (h, l, s) => h << s - 32 | l >>> 64 - s;
 var rotlH = (h, l, s) => s > 32 ? rotlBH(h, l, s) : rotlSH(h, l, s);
 var rotlL = (h, l, s) => s > 32 ? rotlBL(h, l, s) : rotlSL(h, l, s);
+var B = new Uint32Array(5 * 2);
 function keccakP(s, rounds = 24) {
+  if (!(s instanceof Uint32Array))
+    throw new TypeError('"s" expected Uint32Array(50), got type=' + typeof s);
+  if (s.length !== 50)
+    throw new RangeError('"s" expected Uint32Array(50), got length=' + s.length);
   anumber(rounds, "rounds");
   if (rounds < 1 || rounds > 24)
     throw new Error('"rounds" expected integer 1..24');
-  const B = new Uint32Array(5 * 2);
   for (let round = 24 - rounds; round < 24; round++) {
     for (let x = 0; x < 10; x++)
       B[x] = s[x] ^ s[x + 10] ^ s[x + 20] ^ s[x + 30] ^ s[x + 40];
@@ -2655,6 +2970,10 @@ var Keccak = class _Keccak {
   rounds;
   // NOTE: we accept arguments in bytes instead of bits here.
   constructor(blockLen, suffix, outputLen, enableXOF = false, rounds = 24) {
+    anumber(blockLen, "blockLen");
+    anumber(suffix, "suffix");
+    anumber(rounds, "rounds");
+    abool(enableXOF, "enableXOF");
     this.blockLen = blockLen;
     this.suffix = suffix;
     this.outputLen = outputLen;
@@ -2663,7 +2982,7 @@ var Keccak = class _Keccak {
     this.rounds = rounds;
     anumber(outputLen, "outputLen");
     if (!(0 < blockLen && blockLen < 200))
-      throw new Error("only keccak-f1600 function is supported");
+      throw new Error('"blockLen" must be 1..199');
     this.state = new Uint8Array(200);
     this.state32 = u32(this.state);
   }
@@ -2680,9 +2999,20 @@ var Keccak = class _Keccak {
   update(data) {
     aexists(this);
     abytes(data);
-    const { blockLen, state } = this;
+    const { blockLen, state, state32 } = this;
     const len = data.length;
+    const canUseU32 = blockLen % 4 === 0 && data.byteOffset % 4 === 0;
+    const blockLen32 = blockLen / 4;
+    const data32 = canUseU32 && len >= blockLen ? u32(data) : void 0;
     for (let pos = 0; pos < len; ) {
+      if (data32 !== void 0 && this.pos === 0 && pos % 4 === 0 && len - pos >= blockLen) {
+        for (let i = 0, o = pos / 4; i < blockLen32; i++)
+          state32[i] ^= data32[o + i];
+        pos += blockLen;
+        this.pos = blockLen;
+        this.keccak();
+        continue;
+      }
       const take = Math.min(blockLen - this.pos, len - pos);
       for (let i = 0; i < take; i++)
         state[this.pos++] ^= data[pos++];
@@ -2720,7 +3050,7 @@ var Keccak = class _Keccak {
   }
   xofInto(out) {
     if (!this.enableXOF)
-      throw new Error("XOF is not possible for this instance");
+      throw new Error("XOF is not enabled");
     return this.writeInto(out);
   }
   xof(bytes) {
@@ -2731,7 +3061,7 @@ var Keccak = class _Keccak {
     aoutput(out, this);
     if (this.finished)
       throw new Error("digest() was already called");
-    this.writeInto(out.subarray(0, this.outputLen));
+    this.writeInto(out.length === this.outputLen ? out : out.subarray(0, this.outputLen));
     this.destroy();
   }
   digest() {
@@ -2850,6 +3180,10 @@ var _RIPEMD160 = class extends HashMD {
     this.h3 = h3 | 0;
     this.h4 = h4 | 0;
   }
+  _cloneInto(to) {
+    (to ||= new this.constructor()).set(...this.get());
+    return this._cloneIntoMeta(to);
+  }
   process(view, offset) {
     for (let i = 0; i < 16; i++, offset += 4)
       BUF_160[i] = view.getUint32(offset, true);
@@ -2882,19 +3216,13 @@ var _RIPEMD160 = class extends HashMD {
 var ripemd160 = /* @__PURE__ */ createHasher(() => new _RIPEMD160());
 
 // node_modules/@scure/base/index.js
+var freeze = (fn) => Object.freeze(fn());
 function isBytes3(a) {
   return a instanceof Uint8Array || ArrayBuffer.isView(a) && a.constructor.name === "Uint8Array" && "BYTES_PER_ELEMENT" in a && a.BYTES_PER_ELEMENT === 1;
 }
-function isArrayOf(isString, arr) {
-  if (!Array.isArray(arr))
-    return false;
-  if (arr.length === 0)
-    return true;
-  if (isString) {
-    return arr.every((item) => typeof item === "string");
-  } else {
-    return arr.every((item) => Number.isSafeInteger(item));
-  }
+function abytes3(b) {
+  if (!isBytes3(b))
+    throw new TypeError("Uint8Array expected");
 }
 function afn(input) {
   if (typeof input !== "function")
@@ -2906,25 +3234,12 @@ function astr(label, input) {
     throw new TypeError(`${label}: string expected`);
   return true;
 }
-function anumber3(n) {
+function anumber3(n, title = "number") {
   if (typeof n !== "number")
-    throw new TypeError(`number expected, got ${typeof n}`);
+    throw new TypeError(`${title}: expected number, got ${typeof n}`);
   if (!Number.isSafeInteger(n))
-    throw new RangeError(`invalid integer: ${n}`);
+    throw new RangeError(`${title}: expected safe integer, got ${n}`);
 }
-function aArr(input) {
-  if (!Array.isArray(input))
-    throw new TypeError("array expected");
-}
-function astrArr(label, input) {
-  if (!isArrayOf(true, input))
-    throw new TypeError(`${label}: array of strings expected`);
-}
-function anumArr(label, input) {
-  if (!isArrayOf(false, input))
-    throw new TypeError(`${label}: array of numbers expected`);
-}
-// @__NO_SIDE_EFFECTS__
 function chain(...args) {
   const id = (a) => a;
   const wrap = (a, b) => (c) => a(b(c));
@@ -2932,199 +3247,72 @@ function chain(...args) {
   const decode = args.map((x) => x.decode).reduce(wrap, id);
   return { encode, decode };
 }
-// @__NO_SIDE_EFFECTS__
-function alphabet(letters) {
-  const lettersA = typeof letters === "string" ? letters.split("") : letters;
-  const len = lettersA.length;
-  astrArr("alphabet", lettersA);
-  const indexes = new Map(lettersA.map((l, i) => [l, i]));
+var asciiDecoder = /* @__PURE__ */ (() => {
+  try {
+    const decoder = new TextDecoder();
+    return decoder.decode(Uint8Array.of(65, 48, 43, 127)) === "A0+\x7F" ? decoder : void 0;
+  } catch (e) {
+    return void 0;
+  }
+})();
+var B2S_CHUNK = 8192;
+function charcodesToString(codes) {
+  const len = codes.length;
+  if (asciiDecoder !== void 0 && len >= 12)
+    return asciiDecoder.decode(codes);
+  if (len <= B2S_CHUNK)
+    return String.fromCharCode.apply(null, codes);
+  let res = "";
+  for (let i = 0; i < len; i += B2S_CHUNK)
+    res += String.fromCharCode.apply(null, codes.subarray(i, i + B2S_CHUNK));
+  return res;
+}
+function alphabet(letters, aliases) {
+  const len = letters.length;
+  if (len > 128)
+    throw new Error("alphabet: max 128 letters");
+  const encTable = new Uint8Array(len);
+  const decTable = new Int8Array(128).fill(-1);
+  for (let i = 0; i < len; i++) {
+    const code = letters.charCodeAt(i);
+    if (letters.codePointAt(i) !== code || code > 127)
+      throw new Error("alphabet: single-char ASCII letters only");
+    encTable[i] = code;
+    decTable[code] = i;
+  }
+  if (aliases !== void 0) {
+    for (const alias of Object.keys(aliases)) {
+      const code = alias.charCodeAt(0);
+      const target = decTable[aliases[alias].charCodeAt(0)];
+      if (alias.length !== 1 || code > 127 || target === void 0 || target === -1)
+        throw new Error(`alphabet: invalid alias ${alias}`);
+      decTable[code] = target;
+    }
+  }
   return {
     encode: (digits) => {
-      aArr(digits);
-      return digits.map((i) => {
-        if (!Number.isSafeInteger(i) || i < 0 || i >= len)
-          throw new Error(`alphabet.encode: digit index outside alphabet "${i}". Allowed: ${letters}`);
-        return lettersA[i];
-      });
+      const codes = new Uint8Array(digits.length);
+      for (let i = 0; i < digits.length; i++) {
+        const d = digits[i];
+        const code = encTable[d];
+        if (code === void 0)
+          throw new Error(`alphabet.encode: invalid digit ${d}`);
+        codes[i] = code;
+      }
+      return charcodesToString(codes);
     },
     decode: (input) => {
-      aArr(input);
-      return input.map((letter) => {
-        astr("alphabet.decode", letter);
-        const i = indexes.get(letter);
-        if (i === void 0)
-          throw new Error(`Unknown letter: "${letter}". Allowed: ${letters}`);
-        return i;
-      });
-    }
-  };
-}
-// @__NO_SIDE_EFFECTS__
-function join(separator = "") {
-  astr("join", separator);
-  return {
-    encode: (from) => {
-      astrArr("join.decode", from);
-      return from.join(separator);
-    },
-    decode: (to) => {
-      astr("join.decode", to);
-      return to.split(separator);
-    }
-  };
-}
-// @__NO_SIDE_EFFECTS__
-function padding(bits, chr = "=") {
-  anumber3(bits);
-  astr("padding", chr);
-  return {
-    encode(data) {
-      astrArr("padding.encode", data);
-      while (data.length * bits % 8)
-        data.push(chr);
-      return data;
-    },
-    decode(input) {
-      astrArr("padding.decode", input);
-      let end = input.length;
-      if (end * bits % 8)
-        throw new Error("padding: invalid, string should have whole number of bytes");
-      for (; end > 0 && input[end - 1] === chr; end--) {
-        const last = end - 1;
-        const byte = last * bits;
-        if (byte % 8 === 0)
-          throw new Error("padding: invalid, string has too much padding");
+      astr("decode", input);
+      const slen = input.length;
+      const digits = new Uint8Array(slen);
+      for (let i = 0; i < slen; i++) {
+        const code = input.charCodeAt(i);
+        const digit = code < 128 ? decTable[code] : -1;
+        if (digit === -1)
+          throw new Error(`Unknown letter "${input[i]}". Allowed: ${letters}`);
+        digits[i] = digit;
       }
-      return input.slice(0, end);
-    }
-  };
-}
-function convertRadix(data, from, to) {
-  if (from < 2)
-    throw new RangeError(`convertRadix: invalid from=${from}, base cannot be less than 2`);
-  if (to < 2)
-    throw new RangeError(`convertRadix: invalid to=${to}, base cannot be less than 2`);
-  aArr(data);
-  if (!data.length)
-    return [];
-  let pos = 0;
-  const res = [];
-  const digits = Array.from(data, (d) => {
-    anumber3(d);
-    if (d < 0 || d >= from)
-      throw new Error(`invalid integer: ${d}`);
-    return d;
-  });
-  const dlen = digits.length;
-  while (true) {
-    let carry = 0;
-    let done = true;
-    for (let i = pos; i < dlen; i++) {
-      const digit = digits[i];
-      const fromCarry = from * carry;
-      const digitBase = fromCarry + digit;
-      if (!Number.isSafeInteger(digitBase) || fromCarry / from !== carry || digitBase - digit !== fromCarry) {
-        throw new Error("convertRadix: carry overflow");
-      }
-      const div = digitBase / to;
-      carry = digitBase % to;
-      const rounded = Math.floor(div);
-      digits[i] = rounded;
-      if (!Number.isSafeInteger(rounded) || rounded * to + carry !== digitBase)
-        throw new Error("convertRadix: carry overflow");
-      if (!done)
-        continue;
-      else if (!rounded)
-        pos = i;
-      else
-        done = false;
-    }
-    res.push(carry);
-    if (done)
-      break;
-  }
-  for (let i = 0; i < data.length - 1 && data[i] === 0; i++)
-    res.push(0);
-  return res.reverse();
-}
-var gcd = (a, b) => b === 0 ? a : gcd(b, a % b);
-var radix2carry = /* @__NO_SIDE_EFFECTS__ */ (from, to) => from + (to - gcd(from, to));
-var powers = /* @__PURE__ */ (() => {
-  let res = [];
-  for (let i = 0; i < 40; i++)
-    res.push(2 ** i);
-  return res;
-})();
-function convertRadix2(data, from, to, padding2) {
-  aArr(data);
-  if (from <= 0 || from > 32)
-    throw new RangeError(`convertRadix2: wrong from=${from}`);
-  if (to <= 0 || to > 32)
-    throw new RangeError(`convertRadix2: wrong to=${to}`);
-  if (/* @__PURE__ */ radix2carry(from, to) > 32) {
-    throw new Error(`convertRadix2: carry overflow from=${from} to=${to} carryBits=${/* @__PURE__ */ radix2carry(from, to)}`);
-  }
-  let carry = 0;
-  let pos = 0;
-  const max = powers[from];
-  const mask = powers[to] - 1;
-  const res = [];
-  for (const n of data) {
-    anumber3(n);
-    if (n >= max)
-      throw new Error(`convertRadix2: invalid data word=${n} from=${from}`);
-    carry = carry << from | n;
-    if (pos + from > 32)
-      throw new Error(`convertRadix2: carry overflow pos=${pos} from=${from}`);
-    pos += from;
-    for (; pos >= to; pos -= to)
-      res.push((carry >> pos - to & mask) >>> 0);
-    const pow = powers[pos];
-    if (pow === void 0)
-      throw new Error("invalid carry");
-    carry &= pow - 1;
-  }
-  carry = carry << to - pos & mask;
-  if (!padding2 && pos >= from)
-    throw new Error("Excess padding");
-  if (!padding2 && carry > 0)
-    throw new Error(`Non-zero padding: ${carry}`);
-  if (padding2 && pos > 0)
-    res.push(carry >>> 0);
-  return res;
-}
-// @__NO_SIDE_EFFECTS__
-function radix(num) {
-  anumber3(num);
-  const _256 = 2 ** 8;
-  return {
-    encode: (bytes) => {
-      if (!isBytes3(bytes))
-        throw new TypeError("radix.encode input should be Uint8Array");
-      return convertRadix(Array.from(bytes), _256, num);
-    },
-    decode: (digits) => {
-      anumArr("radix.decode", digits);
-      return Uint8Array.from(convertRadix(digits, num, _256));
-    }
-  };
-}
-// @__NO_SIDE_EFFECTS__
-function radix2(bits, revPadding = false) {
-  anumber3(bits);
-  if (bits <= 0 || bits > 32)
-    throw new RangeError("radix2: bits should be in (0..32]");
-  if (/* @__PURE__ */ radix2carry(8, bits) > 32 || /* @__PURE__ */ radix2carry(bits, 8) > 32)
-    throw new RangeError("radix2: carry overflow");
-  return {
-    encode: (bytes) => {
-      if (!isBytes3(bytes))
-        throw new TypeError("radix2.encode input should be Uint8Array");
-      return convertRadix2(Array.from(bytes), 8, bits, !revPadding);
-    },
-    decode: (digits) => {
-      anumArr("radix2.decode", digits);
-      return Uint8Array.from(convertRadix2(digits, bits, 8, revPadding));
+      return digits;
     }
   };
 }
@@ -3136,8 +3324,7 @@ function checksum(len, fn) {
   const _fn = fn;
   return {
     encode(data) {
-      if (!isBytes3(data))
-        throw new TypeError("checksum.encode: input should be Uint8Array");
+      abytes3(data);
       const sum = _fn(data).slice(0, len);
       const res = new Uint8Array(data.length + len);
       res.set(data);
@@ -3145,8 +3332,7 @@ function checksum(len, fn) {
       return res;
     },
     decode(data) {
-      if (!isBytes3(data))
-        throw new TypeError("checksum.decode: input should be Uint8Array");
+      abytes3(data);
       const payload = data.slice(0, -len);
       const oldChecksum = data.slice(-len);
       const newChecksum = _fn(payload).slice(0, len);
@@ -3157,23 +3343,109 @@ function checksum(len, fn) {
     }
   };
 }
-var utils = /* @__PURE__ */ Object.freeze({
-  alphabet,
-  chain,
-  checksum,
-  convertRadix,
-  convertRadix2,
-  radix,
-  radix2,
-  join,
-  padding
-});
-var genBase58 = /* @__NO_SIDE_EFFECTS__ */ (abc) => /* @__PURE__ */ chain(/* @__PURE__ */ radix(58), /* @__PURE__ */ alphabet(abc), /* @__PURE__ */ join(""));
-var base58 = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ genBase58("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"));
+var B58_GROUP = 656356768;
+var radix58 = {
+  encode: (bytes) => {
+    abytes3(bytes);
+    const blen = bytes.length;
+    if (blen === 0)
+      return new Uint8Array(0);
+    let zeros = 0;
+    while (zeros < blen - 1 && bytes[zeros] === 0)
+      zeros++;
+    const nlimbs = Math.ceil(blen / 2);
+    const limbs = new Uint16Array(nlimbs);
+    const odd = blen & 1;
+    if (odd)
+      limbs[0] = bytes[0];
+    for (let i = odd, j2 = odd; i < blen; i += 2, j2++)
+      limbs[j2] = bytes[i] << 8 | bytes[i + 1];
+    const groups = [];
+    let pos = 0;
+    while (pos < nlimbs) {
+      let carry = 0;
+      for (let i = pos; i < nlimbs; i++) {
+        const cur = carry * 65536 + limbs[i];
+        const q = Math.floor(cur / B58_GROUP);
+        carry = cur - q * B58_GROUP;
+        limbs[i] = q;
+        if (q === 0 && i === pos)
+          pos++;
+      }
+      groups.push(carry);
+    }
+    const top = groups.length - 1;
+    let sig = top * 5;
+    for (let v = groups[top]; ; v = Math.floor(v / 58)) {
+      sig++;
+      if (v < 58)
+        break;
+    }
+    const res = new Uint8Array(zeros + sig);
+    let j = res.length - 1;
+    for (let g = 0; g < top; g++) {
+      let v = groups[g];
+      for (let k = 0; k < 5; k++) {
+        res[j--] = v % 58;
+        v = Math.floor(v / 58);
+      }
+    }
+    for (let v = groups[top]; j >= zeros; v = Math.floor(v / 58))
+      res[j--] = v % 58;
+    return res;
+  },
+  decode: (digits) => {
+    abytes3(digits);
+    const dlen = digits.length;
+    if (dlen === 0)
+      return new Uint8Array(0);
+    if (dlen >= 65536)
+      throw new Error("invalid length");
+    let zeros = 0;
+    while (zeros < dlen - 1 && digits[zeros] === 0)
+      zeros++;
+    const limbs = new Uint16Array(Math.ceil(dlen * 6 / 16) + 1);
+    let used = 0;
+    let i = 0;
+    let group = dlen % 5 || 5;
+    while (i < dlen) {
+      let gval = 0;
+      let factor = 1;
+      for (const end = i + group; i < end; i++) {
+        const d = digits[i];
+        if (d >= 58)
+          throw new Error(`invalid integer: ${d}`);
+        gval = gval * 58 + d;
+        factor *= 58;
+      }
+      group = 5;
+      let carry = gval;
+      for (let k = 0; k < used; k++) {
+        const cur = limbs[k] * factor + carry;
+        carry = Math.floor(cur / 65536);
+        limbs[k] = cur - carry * 65536;
+      }
+      for (; carry > 0; carry = Math.floor(carry / 65536))
+        limbs[used++] = carry % 65536;
+    }
+    const valueBytes = used === 0 ? 1 : used * 2 - (limbs[used - 1] < 256 ? 1 : 0);
+    const res = new Uint8Array(zeros + valueBytes);
+    let j = res.length - 1;
+    for (let k = 0; k < used; k++) {
+      const limb = limbs[k];
+      res[j--] = limb & 255;
+      if (j >= zeros)
+        res[j--] = limb >> 8;
+    }
+    return res;
+  }
+};
+var genBase58 = (abc) => chain(radix58, alphabet(abc));
+var base58 = /* @__PURE__ */ freeze(() => genBase58("123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"));
 var createBase58check = (sha2563) => {
   afn(sha2563);
   const _sha256 = sha2563;
-  return /* @__PURE__ */ chain(checksum(4, (data) => _sha256(_sha256(data))), base58);
+  return chain(checksum(4, (data) => _sha256(_sha256(data))), base58);
 };
 
 // node_modules/@scure/bip32/index.js
@@ -3187,14 +3459,21 @@ var BITCOIN_VERSIONS = { private: 76066276, public: 76067358 };
 var HARDENED_OFFSET = 2147483648;
 var hash160 = (data) => ripemd160(sha256(data));
 var fromU32 = (data) => createView(data).getUint32(0, false);
-var toU32 = (n) => {
+var toU32 = (n, title = "number") => {
   if (typeof n !== "number")
-    throw new TypeError("invalid number, should be from 0 to 2**32-1, got " + n);
+    throw new TypeError(`"${title}" expected number, got type=${typeof n}`);
   if (!Number.isSafeInteger(n) || n < 0 || n > 2 ** 32 - 1)
-    throw new RangeError("invalid number, should be from 0 to 2**32-1, got " + n);
+    throw new RangeError(`"${title}" expected integer in range 0..2**32-1, got ${n}`);
   const buf = new Uint8Array(4);
   createView(buf).setUint32(0, n, false);
   return buf;
+};
+var validateVersions = (versions, title = "versions") => {
+  if (!(typeof versions === "object" && versions !== null))
+    throw new Error("versions must be an object");
+  toU32(versions.private, `${title}.private`);
+  toU32(versions.public, `${title}.public`);
+  return versions;
 };
 var HDKey = class _HDKey {
   get fingerprint() {
@@ -3232,6 +3511,7 @@ var HDKey = class _HDKey {
   }
   static fromMasterSeed(seed, versions = BITCOIN_VERSIONS) {
     abytes(seed);
+    versions = validateVersions(versions);
     if (8 * seed.length < 128 || 8 * seed.length > 512) {
       throw new RangeError("HDKey: seed length must be between 128 and 512 bits; 256 bits is advised, got " + seed.length);
     }
@@ -3241,6 +3521,7 @@ var HDKey = class _HDKey {
     return new _HDKey({ versions, chainCode, privateKey });
   }
   static fromExtendedKey(base58key, versions = BITCOIN_VERSIONS) {
+    versions = validateVersions(versions);
     const keyBuffer = base58check.decode(base58key);
     const keyView = createView(keyBuffer);
     const version = keyView.getUint32(0, false);
@@ -3277,7 +3558,7 @@ var HDKey = class _HDKey {
     if (!opt || typeof opt !== "object") {
       throw new Error("HDKey.constructor must not be called directly");
     }
-    this.versions = opt.versions || BITCOIN_VERSIONS;
+    this.versions = opt.versions ? validateVersions(opt.versions) : BITCOIN_VERSIONS;
     this.depth = opt.depth || 0;
     this.chainCode = opt.chainCode ? Uint8Array.from(opt.chainCode) : null;
     this.index = opt.index || 0;
@@ -3305,14 +3586,14 @@ var HDKey = class _HDKey {
     }
     this.pubHash = hash160(this._publicKey);
   }
-  derive(path) {
-    if (!/^[mM]'?/.test(path)) {
+  derive(path2) {
+    if (!/^[mM]'?/.test(path2)) {
       throw new Error('Path must start with "m" or "M"');
     }
-    if (/^[mM]'?$/.test(path)) {
+    if (/^[mM]'?$/.test(path2)) {
       return this;
     }
-    const parts = path.replace(/^[mM]'?\//, "").split("/");
+    const parts = path2.replace(/^[mM]'?\//, "").split("/");
     let child = this;
     for (const c of parts) {
       const m = /^(\d+)('?)$/.exec(c);
@@ -3337,7 +3618,7 @@ var HDKey = class _HDKey {
     if (!this._publicKey || !this.chainCode) {
       throw new Error("No publicKey or chainCode set");
     }
-    let data = toU32(index);
+    let data = toU32(index, "index");
     if (index >= HARDENED_OFFSET) {
       const priv = this._privateKey;
       if (!priv) {
@@ -3415,7 +3696,7 @@ var HDKey = class _HDKey {
       throw new Error("No chainCode set");
     }
     abytes(key, 33);
-    return concatBytes(toU32(version), new Uint8Array([this.depth]), toU32(this.parentFingerprint), toU32(this.index), this.chainCode, key);
+    return concatBytes(toU32(version, "version"), new Uint8Array([this.depth]), toU32(this.parentFingerprint, "parentFingerprint"), toU32(this.index, "index"), this.chainCode, key);
   }
 };
 
@@ -3428,44 +3709,60 @@ function pbkdf2Init(hash, _password, _salt, _opts) {
   anumber(dkLen, "dkLen");
   anumber(asyncTick, "asyncTick");
   if (c < 1)
-    throw new Error("iterations (c) must be >= 1");
+    throw new Error('"c" (iterations) must be >= 1');
   if (dkLen < 1)
     throw new Error('"dkLen" must be >= 1');
   if (dkLen > (2 ** 32 - 1) * hash.outputLen)
     throw new Error("derived key too long");
-  const password = kdfInputToBytes(_password, "password");
-  const salt = kdfInputToBytes(_salt, "salt");
+  const p = kdfInputToBytes(_password, "password");
+  const s = kdfInputToBytes(_salt, "salt");
   const DK = new Uint8Array(dkLen);
-  const PRF = hmac.create(hash, password);
-  const PRFSalt = PRF._cloneInto().update(salt);
-  return { c, dkLen, asyncTick, DK, PRF, PRFSalt };
+  const { iHash, oHash, outputLen } = hmac.create(hash, p);
+  const u = new Uint8Array(outputLen);
+  const eng = pbkdf2Engine(iHash, oHash, s, u);
+  return { c, dkLen, asyncTick, DK, outputLen, eng };
 }
-function pbkdf2Output(PRF, PRFSalt, DK, prfW, u) {
-  PRF.destroy();
-  PRFSalt.destroy();
-  if (prfW)
-    prfW.destroy();
-  clean(u);
-  return DK;
+function pbkdf2Engine(iHash, oHash, salt, u) {
+  const counter = new Uint8Array(4);
+  const view = createView(counter);
+  const salted = iHash._cloneInto().update(salt);
+  const work = oHash._cloneInto();
+  const iClone = iHash._cloneInto;
+  const oClone = oHash._cloneInto;
+  return {
+    u1: (ti, Ti) => {
+      view.setInt32(0, ti, false);
+      salted._cloneInto(work).update(counter).digestInto(u);
+      oHash._cloneInto(work).update(u).digestInto(u);
+      Ti.set(u.subarray(0, Ti.length));
+    },
+    // Whole `F` inner loop for the sync variant: one optimized function owns the hot loop.
+    rounds: (c, Ti) => {
+      for (let ui = 1; ui < c; ui++) {
+        iClone.call(iHash, work).update(u).digestInto(u);
+        oClone.call(oHash, work).update(u).digestInto(u);
+        for (let i = 0; i < Ti.length; i++)
+          Ti[i] ^= u[i];
+      }
+    },
+    output: (DK) => {
+      iHash.destroy();
+      oHash.destroy();
+      salted.destroy();
+      work.destroy();
+      clean(u);
+      return DK;
+    }
+  };
 }
 function pbkdf2(hash, password, salt, opts) {
-  const { c, dkLen, DK, PRF, PRFSalt } = pbkdf2Init(hash, password, salt, opts);
-  let prfW;
-  const arr = new Uint8Array(4);
-  const view = createView(arr);
-  const u = new Uint8Array(PRF.outputLen);
-  for (let ti = 1, pos = 0; pos < dkLen; ti++, pos += PRF.outputLen) {
-    const Ti = DK.subarray(pos, pos + PRF.outputLen);
-    view.setInt32(0, ti, false);
-    (prfW = PRFSalt._cloneInto(prfW)).update(arr).digestInto(u);
-    Ti.set(u.subarray(0, Ti.length));
-    for (let ui = 1; ui < c; ui++) {
-      PRF._cloneInto(prfW).update(u).digestInto(u);
-      for (let i = 0; i < Ti.length; i++)
-        Ti[i] ^= u[i];
-    }
+  const { c, dkLen, DK, outputLen, eng } = pbkdf2Init(hash, password, salt, opts);
+  for (let ti = 1, pos = 0; pos < dkLen; ti++, pos += outputLen) {
+    const Ti = DK.subarray(pos, pos + outputLen);
+    eng.u1(ti, Ti);
+    eng.rounds(c, Ti);
   }
-  return pbkdf2Output(PRF, PRFSalt, DK, prfW, u);
+  return eng.output(DK);
 }
 
 // node_modules/@scure/bip39/index.js
@@ -3489,26 +3786,70 @@ function aentropy(ent) {
 }
 var calcChecksum = (entropy) => {
   const bitsLeft = 8 - entropy.length / 4;
-  return new Uint8Array([sha256(entropy)[0] >> bitsLeft << bitsLeft]);
+  return sha256(entropy)[0] >> bitsLeft << bitsLeft;
 };
-function getCoder(wordlist2) {
+function awordlist(wordlist2) {
   if (!Array.isArray(wordlist2) || wordlist2.length !== 2048 || typeof wordlist2[0] !== "string")
     throw new TypeError("Wordlist: expected array of 2048 strings");
   wordlist2.forEach((i) => {
     if (typeof i !== "string")
       throw new TypeError("wordlist: non-string element: " + i);
   });
-  return utils.chain(utils.checksum(1, calcChecksum), utils.radix2(11, true), utils.alphabet(wordlist2));
+}
+function encodeWords(entropy, wordlist2) {
+  awordlist(wordlist2);
+  const bytes = new Uint8Array(entropy.length + 1);
+  bytes.set(entropy);
+  bytes[entropy.length] = calcChecksum(entropy);
+  const words = [];
+  let carry = 0;
+  let bits = 0;
+  for (const byte of bytes) {
+    carry = carry << 8 | byte;
+    bits += 8;
+    if (bits >= 11) {
+      bits -= 11;
+      words.push(wordlist2[carry >>> bits & 2047]);
+      carry &= (1 << bits) - 1;
+    }
+  }
+  return words;
+}
+function decodeWords(words, wordlist2) {
+  awordlist(wordlist2);
+  const entLen = words.length / 3 * 4;
+  const bytes = new Uint8Array(entLen + 1);
+  let carry = 0;
+  let bits = 0;
+  let pos = 0;
+  for (const word of words) {
+    const index = wordlist2.indexOf(word);
+    if (index === -1)
+      throw new Error("Unknown word: " + word);
+    carry = carry << 11 | index;
+    bits += 11;
+    while (bits >= 8) {
+      bits -= 8;
+      bytes[pos++] = carry >>> bits & 255;
+    }
+    carry &= (1 << bits) - 1;
+  }
+  if (bits > 0)
+    bytes[pos] = carry << 8 - bits;
+  const entropy = bytes.subarray(0, entLen);
+  if (bytes[entLen] !== calcChecksum(entropy))
+    throw new Error("Invalid checksum");
+  return Uint8Array.from(entropy);
 }
 function mnemonicToEntropy(mnemonic, wordlist2) {
   const { words } = normalize(mnemonic);
-  const entropy = getCoder(wordlist2).decode(words);
+  const entropy = decodeWords(words, wordlist2);
   aentropy(entropy);
   return entropy;
 }
 function entropyToMnemonic(entropy, wordlist2) {
   aentropy(entropy);
-  const words = getCoder(wordlist2).encode(entropy);
+  const words = encodeWords(entropy, wordlist2);
   return words.join(isJapanese(wordlist2) ? "\u3000" : " ");
 }
 function validateMnemonic(mnemonic, wordlist2) {
@@ -3519,7 +3860,11 @@ function validateMnemonic(mnemonic, wordlist2) {
   }
   return true;
 }
-var psalt = (passphrase) => nfkd("mnemonic" + passphrase);
+var psalt = (passphrase) => {
+  if (typeof passphrase !== "string")
+    throw new TypeError("invalid passphrase type: " + typeof passphrase);
+  return nfkd("mnemonic" + passphrase);
+};
 function mnemonicToSeedSync(mnemonic, passphrase = "") {
   return pbkdf2(sha512, normalize(mnemonic).nfkd, psalt(passphrase), {
     c: 2048,
@@ -5763,6 +6108,24 @@ function rs1024CreateChecksum(data, extendable) {
 var rs1024Verify = (data, extendable) => rs1024Polymod([...customization(extendable), ...data]) === 1;
 var bitsToWords = (bits) => Math.ceil(bits / RADIX_BITS);
 function encodeShare(share) {
+  assert.ok(Number.isInteger(share.identifier) && share.identifier >= 0 && share.identifier < 2 ** ID_LENGTH_BITS, "identifier out of range");
+  assert.ok(
+    Number.isInteger(share.iterationExponent) && share.iterationExponent >= 0 && share.iterationExponent < 2 ** ITERATION_EXP_LENGTH_BITS,
+    "iteration exponent out of range"
+  );
+  assert.ok(Number.isInteger(share.groupCount) && share.groupCount >= 1 && share.groupCount <= MAX_SHARE_COUNT, "group count out of range");
+  assert.ok(Number.isInteger(share.groupIndex) && share.groupIndex >= 0 && share.groupIndex < share.groupCount, "group index must be below group count");
+  assert.ok(Number.isInteger(share.groupThreshold) && share.groupThreshold >= 1 && share.groupThreshold <= share.groupCount, "group threshold out of range");
+  assert.ok(Number.isInteger(share.memberIndex) && share.memberIndex >= 0 && share.memberIndex < MAX_SHARE_COUNT, "member index out of range");
+  assert.ok(Number.isInteger(share.memberThreshold) && share.memberThreshold >= 1 && share.memberThreshold <= MAX_SHARE_COUNT, "member threshold out of range");
+  assert.ok(
+    Buffer.isBuffer(share.value) || share.value instanceof Uint8Array,
+    "share value must be bytes"
+  );
+  assert.ok(
+    share.value.length >= MIN_STRENGTH_BITS / 8 && share.value.length % 2 === 0,
+    "share value must have a valid even byte length"
+  );
   const valueWordCount = bitsToWords(share.value.length * 8);
   let acc = 0n;
   const push = (v, bits) => {
@@ -5785,7 +6148,8 @@ function encodeShare(share) {
   return [...data, ...rs1024CreateChecksum(data, share.extendable)].map((i) => SLIP39_WORDLIST[i]).join(" ");
 }
 function decodeShare(mnemonic) {
-  const words = String(mnemonic).toLowerCase().trim().split(/\s+/).filter(Boolean);
+  assert.equal(typeof mnemonic, "string", "SLIP-39 mnemonic must be a primitive string");
+  const words = mnemonic.toLowerCase().trim().split(/\s+/).filter(Boolean);
   assert.ok(
     words.length >= METADATA_LENGTH_WORDS + bitsToWords(MIN_STRENGTH_BITS),
     `A SLIP-39 share has at least ${METADATA_LENGTH_WORDS + bitsToWords(MIN_STRENGTH_BITS)} words; got ${words.length}`
@@ -5836,6 +6200,10 @@ function decodeShare(mnemonic) {
     groupCount >= groupThreshold,
     "Invalid SLIP-39 share: group threshold exceeds group count"
   );
+  assert.ok(
+    groupIndex < groupCount,
+    "Invalid SLIP-39 share: group index is outside the declared group count"
+  );
   return {
     identifier,
     extendable,
@@ -5865,12 +6233,12 @@ function splitSecretIntoShares({
   assert.ok(Array.isArray(groups) && groups.length >= 1, "At least one group required");
   assert.ok(groups.length <= MAX_SHARE_COUNT, `At most ${MAX_SHARE_COUNT} groups`);
   assert.ok(
-    groupThreshold >= 1 && groupThreshold <= groups.length,
+    Number.isInteger(groupThreshold) && groupThreshold >= 1 && groupThreshold <= groups.length,
     "Group threshold must be between 1 and the number of groups"
   );
   for (const g of groups) {
     assert.ok(
-      g.threshold >= 1 && g.threshold <= g.count && g.count <= MAX_SHARE_COUNT,
+      Number.isInteger(g.threshold) && Number.isInteger(g.count) && g.threshold >= 1 && g.threshold <= g.count && g.count <= MAX_SHARE_COUNT,
       `Invalid group ${JSON.stringify(g)}`
     );
     assert.ok(
@@ -5965,43 +6333,103 @@ function combineShares(mnemonics, passphrase = "") {
     first.extendable
   );
 }
-function choose(n, k) {
-  if (k < 0 || k > n) return 0;
-  let r = 1;
-  for (let i = 0; i < k; i += 1) r = r * (n - i) / (i + 1);
-  return Math.round(r);
+function chooseBig(n, k) {
+  if (k < 0 || k > n) return 0n;
+  k = Math.min(k, n - k);
+  let r = 1n;
+  for (let i = 1; i <= k; i += 1) {
+    r = r * BigInt(n - k + i) / BigInt(i);
+  }
+  return r;
 }
-function countAdmissibleSubsets(groupThreshold, groups) {
-  const combos = (arr, k) => {
-    if (k === 0) return [[]];
-    if (arr.length < k) return [];
-    const [head, ...rest] = arr;
-    return [...combos(rest, k - 1).map((c) => [head, ...c]), ...combos(rest, k)];
+function combinationsOfIndexes(n, k) {
+  const out = [];
+  const visit = (start, chosen) => {
+    if (chosen.length === k) {
+      out.push(chosen);
+      return;
+    }
+    for (let i = start; i <= n - (k - chosen.length); i += 1) {
+      visit(i + 1, [...chosen, i]);
+    }
   };
-  let total = 0;
-  for (const chosen of combos(groups.map((_, i) => i), groupThreshold)) {
-    let product = 1;
-    for (const gi of chosen) product *= choose(groups[gi].count, groups[gi].threshold);
+  visit(0, []);
+  return out;
+}
+function countAdmissibleSubsetsExact(groupThreshold, groups) {
+  assert.ok(
+    Array.isArray(groups) && groups.length >= 1 && groups.length <= MAX_SHARE_COUNT,
+    "invalid group list"
+  );
+  assert.ok(Number.isInteger(groupThreshold) && groupThreshold >= 1 && groupThreshold <= groups.length, "invalid group threshold");
+  for (const group of groups) {
+    assert.ok(Number.isInteger(group.count) && Number.isInteger(group.threshold) && group.threshold >= 1 && group.threshold <= group.count && group.count <= MAX_SHARE_COUNT, "invalid group layout");
+  }
+  let total = 0n;
+  for (const chosen of combinationsOfIndexes(groups.length, groupThreshold)) {
+    let product = 1n;
+    for (const gi of chosen) {
+      product *= chooseBig(groups[gi].count, groups[gi].threshold);
+    }
     total += product;
   }
   return total;
 }
-function randomAdmissibleSubset(groupThreshold, groups, mnemonics, rng) {
-  const pick = (arr, k) => {
-    const pool = [...arr];
-    const out = [];
-    for (let i = 0; i < k; i += 1) {
-      const j = rng(4).readUInt32BE(0) % pool.length;
-      out.push(pool.splice(j, 1)[0]);
+function unrankCombination(items, k, rank) {
+  const out = [];
+  let start = 0;
+  for (let left = k; left > 0; left -= 1) {
+    for (let i = start; i <= items.length - left; i += 1) {
+      const block = chooseBig(items.length - i - 1, left - 1);
+      if (rank < block) {
+        out.push(items[i]);
+        start = i + 1;
+        break;
+      }
+      rank -= block;
     }
-    return out;
-  };
-  const chosenGroups = pick(groups.map((_, i) => i), groupThreshold);
+  }
+  return out;
+}
+function admissibleSubsetAtRank(groupThreshold, groups, mnemonics, rank) {
+  const total = countAdmissibleSubsetsExact(groupThreshold, groups);
+  assert.ok(
+    typeof rank === "bigint" && rank >= 0n && rank < total,
+    "admissible subset rank out of range"
+  );
+  const groupSets = combinationsOfIndexes(groups.length, groupThreshold);
+  let chosenGroups;
+  for (const candidate of groupSets) {
+    const weight = candidate.reduce((product, gi) => product * chooseBig(groups[gi].count, groups[gi].threshold), 1n);
+    if (rank < weight) {
+      chosenGroups = candidate;
+      break;
+    }
+    rank -= weight;
+  }
+  assert.ok(chosenGroups, "internal admissible subset unranking failure");
   const subset = [];
   for (const gi of chosenGroups) {
-    subset.push(...pick(mnemonics[gi], groups[gi].threshold));
+    const count = chooseBig(groups[gi].count, groups[gi].threshold);
+    const memberRank = rank % count;
+    rank /= count;
+    subset.push(...unrankCombination(mnemonics[gi], groups[gi].threshold, memberRank));
   }
   return subset;
+}
+function randomBigIntBelow(limit, rng) {
+  assert.ok(limit > 0n);
+  const bits = limit.toString(2).length;
+  const bytes = Math.ceil(bits / 8);
+  const mask = (1n << BigInt(bits)) - 1n;
+  for (; ; ) {
+    const candidate = BigInt(`0x${Buffer.from(rng(bytes)).toString("hex") || "0"}`) & mask;
+    if (candidate < limit) return candidate;
+  }
+}
+function randomAdmissibleRank(total, rng) {
+  assert.ok(typeof total === "bigint" && total > 0n, "total must be a positive bigint");
+  return randomBigIntBelow(total, rng);
 }
 function admissibleSubsets(groupThreshold, groups, mnemonics) {
   const chooseK = (arr, k) => {
@@ -7359,8 +7787,13 @@ var EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 function encodeAddressQRs(addresses, { ecc = "L" } = {}) {
   assert2.ok(Array.isArray(addresses) && addresses.length > 0, "no addresses given");
   addresses.forEach((address, i) => {
+    assert2.equal(
+      typeof address,
+      "string",
+      `entry ${i} must be a primitive string; objects are never QR-encoded`
+    );
     assert2.match(
-      String(address),
+      address,
       EVM_ADDRESS,
       `entry ${i} is not an EVM address. This encoder accepts addresses only - it must never be handed a mnemonic, key, share or extended public key.`
     );
@@ -7421,6 +7854,322 @@ function qrSelfTest({ log = () => {
   log(`QR address encoding: ${qrs.length} symbol(s), all within v${MAX_SCANNABLE_VERSION}`);
 }
 
+// cli.mjs
+import assert3 from "node:assert/strict";
+var COMMANDS = /* @__PURE__ */ new Map([
+  ["--self-test", "self-test"],
+  ["--wizard", "wizard"],
+  ["--generate", "generate"],
+  ["--verify", "verify"],
+  ["--split", "split"],
+  ["--combine", "combine"],
+  ["--op-export", "op-export"],
+  ["--prove-guard", "prove-guard"],
+  ["--prove-sandbox", "prove-guard"],
+  ["--license", "license"]
+]);
+var BOOLEAN_SCOPES = /* @__PURE__ */ new Map([
+  ["--dice", /* @__PURE__ */ new Set(["wizard", "generate"])],
+  ["--show-public", /* @__PURE__ */ new Set(["wizard", "generate", "verify", "combine"])],
+  ["--show-private", /* @__PURE__ */ new Set(["wizard", "generate", "verify", "combine"])],
+  ["--wipe-screen", /* @__PURE__ */ new Set(["wizard", "generate"])],
+  ["--dry-run", /* @__PURE__ */ new Set(["op-export"])],
+  ["--qr", /* @__PURE__ */ new Set(["wizard", "generate", "verify", "combine"])]
+]);
+var OPTION_SCOPES = /* @__PURE__ */ new Map([
+  ["--scheme", /* @__PURE__ */ new Set(["wizard", "generate", "verify", "split", "combine", "op-export"])],
+  ["--accounts", /* @__PURE__ */ new Set(["wizard", "generate", "verify", "split", "combine", "op-export"])],
+  ["--shares", /* @__PURE__ */ new Set(["wizard", "split"])],
+  ["--group-threshold", /* @__PURE__ */ new Set(["wizard", "split"])]
+]);
+function exactInteger(value, name, min, max = Number.MAX_SAFE_INTEGER) {
+  assert3.match(value, /^(0|[1-9][0-9]*)$/, `${name} must be a base-10 integer`);
+  const number = Number(value);
+  assert3.ok(
+    Number.isSafeInteger(number) && number >= min && number <= max,
+    `${name} must be an integer between ${min} and ${max}`
+  );
+  return number;
+}
+function parseCli(argv, {
+  defaultScheme,
+  schemes,
+  defaultAccounts,
+  maxAccounts
+} = {}) {
+  if (argv.includes("--help")) {
+    return { command: "help", flags: /* @__PURE__ */ new Set(["--help"]) };
+  }
+  const flags = /* @__PURE__ */ new Set();
+  const opts = /* @__PURE__ */ new Map();
+  for (const arg of argv) {
+    assert3.ok(arg.startsWith("--"), `Unexpected positional argument "${arg}"`);
+    const eq = arg.indexOf("=");
+    if (eq === -1) {
+      assert3.ok(!flags.has(arg), `Duplicate flag "${arg}"`);
+      flags.add(arg);
+    } else {
+      const key = arg.slice(0, eq);
+      assert3.ok(!opts.has(key), `Duplicate option "${key}"`);
+      assert3.ok(arg.slice(eq + 1).length > 0, `${key} requires a value`);
+      opts.set(key, arg.slice(eq + 1));
+    }
+  }
+  for (const flag of flags) {
+    assert3.ok(COMMANDS.has(flag) || BOOLEAN_SCOPES.has(flag), `Unknown flag "${flag}"`);
+  }
+  for (const key of opts.keys()) {
+    assert3.ok(OPTION_SCOPES.has(key), `Unknown option "${key}"`);
+  }
+  const selected = [...flags].filter((flag) => COMMANDS.has(flag));
+  assert3.equal(selected.length, 1, "select exactly one command (use --help for usage)");
+  const command = COMMANDS.get(selected[0]);
+  assert3.equal(
+    selected.filter((flag) => COMMANDS.get(flag) === command).length,
+    1,
+    "command aliases cannot be used together"
+  );
+  for (const flag of flags) {
+    if (BOOLEAN_SCOPES.has(flag)) {
+      assert3.ok(BOOLEAN_SCOPES.get(flag).has(command), `${flag} is not valid with --${command}`);
+    }
+  }
+  for (const key of opts.keys()) {
+    assert3.ok(OPTION_SCOPES.get(key).has(command), `${key} is not valid with --${command}`);
+  }
+  const scheme = opts.get("--scheme") ?? defaultScheme;
+  assert3.ok(
+    schemes.includes(scheme),
+    `Unknown --scheme "${scheme}". Available: ${schemes.join(", ")}`
+  );
+  const count = exactInteger(
+    opts.get("--accounts") ?? String(defaultAccounts),
+    "--accounts",
+    1,
+    maxAccounts
+  );
+  const groupThreshold = exactInteger(
+    opts.get("--group-threshold") ?? "1",
+    "--group-threshold",
+    1,
+    16
+  );
+  return {
+    command,
+    flags,
+    scheme,
+    count,
+    shareSpec: opts.get("--shares") ?? "2of3",
+    groupThreshold,
+    showPrivate: flags.has("--show-private"),
+    showPublic: flags.has("--show-public"),
+    useDice: flags.has("--dice"),
+    wipe: flags.has("--wipe-screen"),
+    dryRun: flags.has("--dry-run"),
+    qr: flags.has("--qr")
+  };
+}
+
+// terminal.mjs
+import process from "node:process";
+var ETX = "";
+var EOT = "";
+var ESC = "\x1B";
+var BS = "\b";
+var DEL = "\x7F";
+var segmenter = new Intl.Segmenter(void 0, { granularity: "grapheme" });
+function dropLastGrapheme(value) {
+  const segments = [...segmenter.segment(value)];
+  return segments.length === 0 ? value : value.slice(0, segments.at(-1).index);
+}
+var TerminalInputDecoder = class {
+  #value = "";
+  #escape = "";
+  #paste = false;
+  get value() {
+    return this.#value;
+  }
+  push(chunk) {
+    let completed = false;
+    let aborted = false;
+    let erased = 0;
+    let echo = "";
+    for (const ch of chunk) {
+      if (this.#escape) {
+        if (ch === ETX || ch === EOT) {
+          this.#escape = "";
+          aborted = true;
+          break;
+        }
+        if ((ch === "\r" || ch === "\n") && !this.#paste) {
+          this.#escape = "";
+          completed = true;
+          break;
+        }
+        this.#escape += ch;
+        if (this.#escape === `${ESC}[200~`) {
+          this.#paste = true;
+          this.#escape = "";
+        } else if (this.#escape === `${ESC}[201~`) {
+          this.#paste = false;
+          this.#escape = "";
+        } else if (this.#escape.startsWith(`${ESC}[`) && this.#escape.length >= 3 && /[@-~]$/.test(ch) || this.#escape.startsWith(`${ESC}O`) && this.#escape.length >= 3 || !this.#escape.startsWith(`${ESC}[`) && !this.#escape.startsWith(`${ESC}O`) && this.#escape.length >= 2) {
+          this.#escape = "";
+        } else if (this.#escape.length > 64) {
+          this.#escape = "";
+        }
+        continue;
+      }
+      if (ch === ESC) {
+        this.#escape = ESC;
+        continue;
+      }
+      if (ch === "\r" || ch === "\n") {
+        if (this.#paste) {
+          this.#value += ch;
+          echo += ch;
+        } else {
+          completed = true;
+          break;
+        }
+        continue;
+      }
+      if (ch === ETX || ch === EOT) {
+        aborted = true;
+        break;
+      }
+      if (ch === BS || ch === DEL) {
+        const next = dropLastGrapheme(this.#value);
+        if (next !== this.#value) {
+          this.#value = next;
+          erased += 1;
+        }
+        continue;
+      }
+      if (ch < " " && !this.#paste) continue;
+      this.#value += ch;
+      echo += ch;
+    }
+    return { completed, aborted, erased, echo };
+  }
+};
+async function readInput(prompt, {
+  echo = false,
+  stdin = process.stdin,
+  stdout = process.stdout
+} = {}) {
+  if (!stdin.isTTY || typeof stdin.setRawMode !== "function") {
+    throw new Error("stdin is not a terminal; this command needs interactive input");
+  }
+  const wasRaw = Boolean(stdin.isRaw);
+  const decoder = new TerminalInputDecoder();
+  stdin.setRawMode(true);
+  stdin.resume();
+  stdin.setEncoding("utf8");
+  stdout.write(prompt);
+  try {
+    await new Promise((resolve, reject) => {
+      const cleanup = () => {
+        stdin.off("data", onData);
+        stdin.off("error", onError);
+        stdin.off("end", onEnd);
+      };
+      const onError = (error) => {
+        cleanup();
+        reject(error);
+      };
+      const onEnd = () => {
+        cleanup();
+        reject(new Error("terminal input ended unexpectedly"));
+      };
+      const onData = (chunk) => {
+        const event = decoder.push(chunk);
+        if (echo && event.echo) stdout.write(event.echo);
+        if (echo && event.erased) stdout.write("\b \b".repeat(event.erased));
+        if (event.aborted) {
+          cleanup();
+          stdout.write("\n");
+          reject(new Error("aborted by user"));
+        } else if (event.completed) {
+          cleanup();
+          stdout.write("\n");
+          resolve();
+        }
+      };
+      stdin.on("data", onData);
+      stdin.once("error", onError);
+      stdin.once("end", onEnd);
+    });
+  } finally {
+    stdin.setRawMode(wasRaw);
+    stdin.pause();
+  }
+  const value = decoder.value;
+  if (!value.isWellFormed()) {
+    throw new Error("input contains malformed Unicode; nothing was accepted");
+  }
+  return value;
+}
+function normalizePassphrase(value) {
+  if (typeof value !== "string" || !value.isWellFormed()) {
+    throw new TypeError("passphrase must be well-formed Unicode text");
+  }
+  return value.normalize("NFKD");
+}
+function validateNewWalletPassphrase(value) {
+  if (value === "") return;
+  if (!/^[\x20-\x7e]+$/.test(value)) {
+    throw new Error(
+      "new-wallet passphrases must contain printable ASCII only (space through ~)"
+    );
+  }
+}
+function looksObviouslyWeakPassphrase(value) {
+  if (value.length < 16) return true;
+  if (/^(.)\1+$/u.test(value)) return true;
+  if (/^(.{1,8})\1+$/u.test(value)) return true;
+  if (/^(password|passphrase|letmein|qwerty|123456|correct horse battery staple)/iu.test(value.trim())) return true;
+  return false;
+}
+
+// op-transport.mjs
+async function sendSecretPayload({
+  spawn,
+  shell,
+  cat,
+  opPath,
+  vault,
+  payload,
+  preview = false
+}) {
+  const script = `exec ${cat} | "$1" item create --vault "$2" --format=json ${preview ? "--dry-run " : ""}-`;
+  const child = spawn(shell, ["-c", script, "sh", opPath, vault], {
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  let transportFailed = false;
+  child.stdout.on("data", () => {
+  });
+  child.stderr.on("data", () => {
+  });
+  child.stdin.on("error", () => {
+    transportFailed = true;
+  });
+  const result = await new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
+    child.on("error", () => finish({ code: -1, transportFailed: true }));
+    child.on("close", (code) => finish({ code, transportFailed }));
+    child.stdin.end(payload);
+  });
+  if (result.transportFailed && result.code === 0) result.code = -1;
+  return result;
+}
+
 // generate.mjs
 var TOOL_ID = "heatdeath/v2";
 var ENTROPY_BYTES = 32;
@@ -7449,10 +8198,6 @@ var PATH_SCHEMES = {
   }
 };
 var DEFAULT_SCHEME = "metamask";
-var KEY_ETX = String.fromCharCode(3);
-var KEY_EOT = String.fromCharCode(4);
-var KEY_DEL = String.fromCharCode(127);
-var ESC = String.fromCharCode(27);
 var sha2562 = (...chunks) => {
   const h = createHash2("sha256");
   for (const c of chunks) h.update(c);
@@ -7461,29 +8206,29 @@ var sha2562 = (...chunks) => {
 var POPCOUNT = new Uint8Array(256);
 for (let i = 0; i < 256; i += 1) POPCOUNT[i] = (i & 1) + POPCOUNT[i >> 1];
 function bigToBytes32(value) {
-  assert3.ok(value > 0n && value < CURVE_N, "Scalar out of range");
+  assert4.ok(value > 0n && value < CURVE_N, "Scalar out of range");
   return Buffer.from(value.toString(16).padStart(64, "0"), "hex");
 }
 function bytesToBig(bytes) {
   return BigInt(`0x${Buffer.from(bytes).toString("hex")}`);
 }
 function xorInto(target, source) {
-  assert3.equal(target.length, source.length);
+  assert4.equal(target.length, source.length);
   for (let i = 0; i < target.length; i += 1) target[i] ^= source[i];
   return target;
 }
 function equalBytes(a, b) {
   return a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 }
-function parsePath(path) {
-  const parts = path.split("/");
-  assert3.equal(parts[0], "m", `Path must start with "m": ${path}`);
+function parsePath(path2) {
+  const parts = path2.split("/");
+  assert4.equal(parts[0], "m", `Path must start with "m": ${path2}`);
   return parts.slice(1).map((part) => {
     const hardened = /['hH]$/.test(part);
     const raw = hardened ? part.slice(0, -1) : part;
-    assert3.match(raw, /^[0-9]+$/, `Bad path element: ${part}`);
+    assert4.match(raw, /^[0-9]+$/, `Bad path element: ${part}`);
     const n = Number.parseInt(raw, 10);
-    assert3.ok(n >= 0 && n < 2147483648, `Path element out of range: ${part}`);
+    assert4.ok(n >= 0 && n < 2147483648, `Path element out of range: ${part}`);
     return hardened ? n + 2147483648 : n;
   });
 }
@@ -7491,7 +8236,7 @@ var pathFor = (scheme, index) => PATH_SCHEMES[scheme].template.replace("%i", Str
 var templateFor = (scheme) => PATH_SCHEMES[scheme].template.replace("%i", "i");
 function inspectorUrl() {
   try {
-    return process.getBuiltinModule?.("node:inspector")?.url?.();
+    return process2.getBuiltinModule?.("node:inspector")?.url?.();
   } catch {
     return void 0;
   }
@@ -7499,12 +8244,12 @@ function inspectorUrl() {
 function assertRuntime({ requireTty = true } = {}) {
   const fatal = [];
   const warn = [];
-  if (process.env.SSH_TTY || process.env.SSH_CONNECTION) {
+  if (process2.env.SSH_TTY || process2.env.SSH_CONNECTION) {
     fatal.push(
       "This is an SSH session. Every character printed here crosses a network and lands in a remote terminal's scrollback. Run on the physical machine."
     );
   }
-  const inspectFlags = [...process.execArgv, process.env.NODE_OPTIONS ?? ""].join(" ").match(/--inspect[\w-]*/g);
+  const inspectFlags = [...process2.execArgv, process2.env.NODE_OPTIONS ?? ""].join(" ").match(/--inspect[\w-]*/g);
   if (inspectFlags) {
     fatal.push(
       `A debugger port is enabled (${inspectFlags.join(", ")}). Anything attached to it can read the seed straight out of process memory.`
@@ -7512,36 +8257,44 @@ function assertRuntime({ requireTty = true } = {}) {
   }
   const inspector = inspectorUrl();
   if (inspector) fatal.push(`An inspector is already listening on ${inspector}.`);
-  if (requireTty && !process.stdout.isTTY) {
+  if (requireTty && !process2.stdout.isTTY) {
     fatal.push(
       "stdout is not a terminal. NOTE: this check is a convenience guard, not a security boundary - script(1), `tmux pipe-pane`, expect and terminal session logging all defeat it trivially. You remain responsible for ensuring nothing is recording this terminal."
     );
   }
-  if (!process.permission) {
+  if (!process2.permission) {
     warn.push(
-      "Node's permission model is OFF. Network, subprocesses and file writes are technically possible from this process. Prefer `npm run generate`, which enables it."
+      "Node's trusted-code capability guard is OFF. Network, subprocesses and file writes are technically possible from this process. Prefer `npm run generate`, which enables it."
     );
   } else {
     for (const scope of ["net", "child", "worker", "fs.write", "addon"]) {
-      if (process.permission.has(scope)) {
+      if (process2.permission.has(scope)) {
         warn.push(`Permission model is enabled but "${scope}" is ALLOWED.`);
       }
     }
+    if (process2.permission.has("fs.read", process2.cwd())) {
+      warn.push(
+        "Repository-wide filesystem read is allowed. This is expected only in source-checkout mode; signed bundle commands need /dev/urandom only."
+      );
+    }
+    if (!process2.permission.has("fs.read", "/dev/urandom")) {
+      fatal.push("The required /dev/urandom read capability is missing.");
+    }
   }
-  if (typeof process.getuid === "function" && process.getuid() === 0) {
+  if (typeof process2.getuid === "function" && process2.getuid() === 0) {
     warn.push("Running as root. This tool needs no privileges whatsoever.");
   }
-  if (process.env.TMUX || process.env.STY) {
+  if (process2.env.TMUX || process2.env.STY) {
     warn.push(
       "Running inside tmux/screen. These keep large scrollback buffers and can be configured to log the session to disk."
     );
   }
-  if (process.env.NODE_OPTIONS && !process.permission) {
+  if (process2.env.NODE_OPTIONS && !process2.permission) {
     warn.push(
-      `NODE_OPTIONS is set ("${process.env.NODE_OPTIONS}"). It can inject code via --require / --import before this file runs.`
+      `NODE_OPTIONS is set ("${process2.env.NODE_OPTIONS}"). It can inject code via --require / --import before this file runs.`
     );
   }
-  const cwd = process.cwd();
+  const cwd = process2.cwd();
   for (const dir of [
     "Library/Mobile Documents",
     "iCloud",
@@ -7567,8 +8320,8 @@ function assertRuntime({ requireTty = true } = {}) {
   } catch {
   }
   if (warn.length > 0) {
-    process.stdout.write("\nWARNINGS\n");
-    for (const w of warn) process.stdout.write(`  ! ${w}
+    process2.stdout.write("\nWARNINGS\n");
+    for (const w of warn) process2.stdout.write(`  ! ${w}
 `);
   }
   if (fatal.length > 0) {
@@ -7580,8 +8333,8 @@ ${fatal.map((f) => `  x ${f}`).join("\n")}`
   return { warnings: warn };
 }
 function assertWordlistIntegrity() {
-  assert3.equal(wordlist.length, 2048, "Wordlist must contain exactly 2048 words");
-  assert3.equal(
+  assert4.equal(wordlist.length, 2048, "Wordlist must contain exactly 2048 words");
+  assert4.equal(
     sha2562(`${wordlist.join("\n")}
 `).toString("hex"),
     WORDLIST_SHA256,
@@ -7589,7 +8342,7 @@ function assertWordlistIntegrity() {
   );
 }
 function toChecksumAddress(lowercaseHex) {
-  assert3.match(lowercaseHex, /^[0-9a-f]{40}$/);
+  assert4.match(lowercaseHex, /^[0-9a-f]{40}$/);
   const hash = bytesToHex(keccak_256(new TextEncoder().encode(lowercaseHex)));
   let result = "0x";
   for (let i = 0; i < lowercaseHex.length; i += 1) {
@@ -7600,8 +8353,8 @@ function toChecksumAddress(lowercaseHex) {
 }
 function addressFromPrivateKey(privateKey) {
   const publicKey = secp256k1.getPublicKey(privateKey, false);
-  assert3.equal(publicKey.length, 65);
-  assert3.equal(publicKey[0], 4);
+  assert4.equal(publicKey.length, 65);
+  assert4.equal(publicKey[0], 4);
   const digest = keccak_256(publicKey.slice(1));
   return {
     address: toChecksumAddress(bytesToHex(digest.slice(-20))),
@@ -7614,13 +8367,13 @@ function primaryAccounts(seed, scheme, count) {
   const nodes = [];
   const accounts = [];
   for (let index = 0; index < count; index += 1) {
-    const path = pathFor(scheme, index);
-    const node = master.derive(path);
-    assert3.ok(node.privateKey, `No private key at ${path}`);
+    const path2 = pathFor(scheme, index);
+    const node = master.derive(path2);
+    assert4.ok(node.privateKey, `No private key at ${path2}`);
     nodes.push(node);
     accounts.push({
       index,
-      path,
+      path: path2,
       privateKey: Buffer.from(node.privateKey),
       ...addressFromPrivateKey(node.privateKey)
     });
@@ -7636,11 +8389,11 @@ function primaryAccounts(seed, scheme, count) {
 }
 function refEntropyToMnemonic(entropy, words) {
   const csBits = entropy.length * 8 / 32;
-  assert3.ok(Number.isInteger(csBits) && csBits >= 4 && csBits <= 8);
+  assert4.ok(Number.isInteger(csBits) && csBits >= 4 && csBits <= 8);
   let bits = "";
   for (const byte of entropy) bits += byte.toString(2).padStart(8, "0");
   bits += sha2562(entropy)[0].toString(2).padStart(8, "0").slice(0, csBits);
-  assert3.equal(bits.length % 11, 0);
+  assert4.equal(bits.length % 11, 0);
   const out = [];
   for (let i = 0; i < bits.length; i += 11) {
     out.push(words[Number.parseInt(bits.slice(i, i + 11), 2)]);
@@ -7659,7 +8412,7 @@ function refMnemonicToSeed(mnemonic, passphrase = "") {
 function refMaster(seed) {
   const I = createHmac2("sha512", "Bitcoin seed").update(seed).digest();
   const k = bytesToBig(I.subarray(0, 32));
-  assert3.ok(k > 0n && k < CURVE_N, "Invalid master key (probability ~2^-127)");
+  assert4.ok(k > 0n && k < CURVE_N, "Invalid master key (probability ~2^-127)");
   return { k, c: I.subarray(32) };
 }
 function refCkdPriv(node, index) {
@@ -7672,15 +8425,15 @@ function refCkdPriv(node, index) {
   data.writeUInt32BE(index >>> 0, 33);
   const I = createHmac2("sha512", node.c).update(data).digest();
   const IL = bytesToBig(I.subarray(0, 32));
-  assert3.ok(IL < CURVE_N, "CKDpriv: IL >= n (probability ~2^-127)");
+  assert4.ok(IL < CURVE_N, "CKDpriv: IL >= n (probability ~2^-127)");
   const k = (IL + node.k) % CURVE_N;
-  assert3.ok(k > 0n, "CKDpriv: resulting key is zero (probability ~2^-256)");
+  assert4.ok(k > 0n, "CKDpriv: resulting key is zero (probability ~2^-256)");
   data.fill(0);
   return { k, c: I.subarray(32) };
 }
-function refDerive(seed, path) {
+function refDerive(seed, path2) {
   let node = refMaster(seed);
-  for (const index of parsePath(path)) node = refCkdPriv(node, index);
+  for (const index of parsePath(path2)) node = refCkdPriv(node, index);
   return bigToBytes32(node.k);
 }
 function refFingerprint(seed) {
@@ -7691,29 +8444,29 @@ function refFingerprint(seed) {
 }
 function crossCheck({ entropy, phrase, passphrase, seed, accounts, fingerprint }) {
   if (entropy) {
-    assert3.equal(
+    assert4.equal(
       refEntropyToMnemonic(entropy, wordlist),
       phrase,
       "CROSS-CHECK FAILED: independent BIP-39 encoder disagrees on the mnemonic"
     );
   }
   const refSeed = refMnemonicToSeed(phrase, passphrase);
-  assert3.ok(
+  assert4.ok(
     equalBytes(refSeed, seed),
     "CROSS-CHECK FAILED: independent PBKDF2 disagrees on the BIP-39 seed"
   );
-  assert3.equal(
+  assert4.equal(
     refFingerprint(refSeed),
     fingerprint,
     "CROSS-CHECK FAILED: independent BIP-32 disagrees on the master fingerprint"
   );
   for (const account of accounts) {
     const refKey = refDerive(refSeed, account.path);
-    assert3.ok(
+    assert4.ok(
       equalBytes(refKey, account.privateKey),
       `CROSS-CHECK FAILED: private key mismatch at ${account.path}`
     );
-    assert3.equal(
+    assert4.equal(
       addressFromPrivateKey(refKey).address,
       account.address,
       `CROSS-CHECK FAILED: address mismatch at ${account.path}`
@@ -7729,7 +8482,7 @@ function readUrandom(length) {
     let read = 0;
     while (read < length) {
       const n = fs.readSync(fd, buf, read, length - read, null);
-      assert3.ok(n > 0, "/dev/urandom returned no data");
+      assert4.ok(n > 0, "/dev/urandom returned no data");
       read += n;
     }
     return buf;
@@ -7738,7 +8491,7 @@ function readUrandom(length) {
   }
 }
 function healthTest(name, sample) {
-  const fail = (test) => assert3.fail(`ENTROPY HEALTH TEST FAILED - source "${name}" failed ${test}`);
+  const fail = (test) => assert4.fail(`ENTROPY HEALTH TEST FAILED - source "${name}" failed ${test}`);
   let run = 1;
   for (let i = 1; i < sample.length; i += 1) {
     run = sample[i] === sample[i - 1] ? run + 1 : 1;
@@ -7759,7 +8512,7 @@ function healthTest(name, sample) {
   }
 }
 function diceEntropy(rolls) {
-  assert3.ok(
+  assert4.ok(
     rolls.length >= DICE_MIN_ROLLS,
     `Need at least ${DICE_MIN_ROLLS} d6 rolls (= ${(DICE_MIN_ROLLS * Math.log2(6)).toFixed(1)} bits); got ${rolls.length}`
   );
@@ -7790,14 +8543,6 @@ function collectEntropy({ dice }) {
   const PROBE = 4096;
   const providers = [
     { name: "openssl-drbg", get: (n) => randomBytes4(n) },
-    {
-      name: "webcrypto",
-      get: (n) => {
-        const b = new Uint8Array(n);
-        webcrypto.getRandomValues(b);
-        return Buffer.from(b);
-      }
-    },
     { name: "kernel-urandom", get: readUrandom }
   ];
   const report = [];
@@ -7819,15 +8564,16 @@ function collectEntropy({ dice }) {
     material.push({ name: provider.name, draw: provider.get(ENTROPY_BYTES) });
     report.push({ name: provider.name, status: "OK" });
   }
-  assert3.ok(
-    material.length >= 2,
-    `Only ${material.length} entropy source(s) available; refusing to generate`
+  assert4.equal(
+    material.length,
+    providers.length,
+    `Only ${material.length}/${providers.length} required OS entropy paths available; refusing to generate`
   );
   for (let i = 0; i < probes.length; i += 1) {
     for (let j = i + 1; j < probes.length; j += 1) {
-      assert3.ok(
+      assert4.ok(
         !probes[i].probe.equals(probes[j].probe),
-        `Sources "${probes[i].name}" and "${probes[j].name}" returned identical bytes - this indicates a cloned/restored VM or a stubbed RNG`
+        `Sources "${probes[i].name}" and "${probes[j].name}" returned identical bytes - this indicates a catastrophic duplicate/stubbed output`
       );
     }
   }
@@ -7847,7 +8593,7 @@ function collectEntropy({ dice }) {
       status: `OK (${dice.rolls} rolls = ${dice.bits.toFixed(1)} bits${dice.biased ? ", CHI-SQUARE SUGGESTS A BIASED DIE" : ""})`
     });
   }
-  assert3.ok(
+  assert4.ok(
     !entropy.equals(Buffer.alloc(ENTROPY_BYTES)),
     "Combined entropy is all zeros"
   );
@@ -7869,53 +8615,8 @@ function makeShamirRng() {
   rng.dispose = () => entropy.fill(0);
   return rng;
 }
-async function readInput(prompt, { echo = false } = {}) {
-  const stdin = process.stdin;
-  if (!stdin.isTTY) {
-    throw new Error("stdin is not a terminal; this command needs interactive input");
-  }
-  const wasRaw = Boolean(stdin.isRaw);
-  stdin.setRawMode(true);
-  stdin.resume();
-  stdin.setEncoding("utf8");
-  process.stdout.write(prompt);
-  let buffer = "";
-  try {
-    await new Promise((resolve, reject) => {
-      const onData = (chunk) => {
-        for (const ch of chunk) {
-          if (ch === "\r" || ch === "\n") {
-            stdin.off("data", onData);
-            process.stdout.write("\n");
-            return resolve();
-          }
-          if (ch === KEY_ETX || ch === KEY_EOT) {
-            stdin.off("data", onData);
-            process.stdout.write("\n");
-            return reject(new Error("aborted by user"));
-          }
-          if (ch === KEY_DEL || ch === "\b") {
-            if (buffer.length > 0) {
-              buffer = buffer.slice(0, -1);
-              if (echo) process.stdout.write("\b \b");
-            }
-            continue;
-          }
-          if (ch < " ") continue;
-          buffer += ch;
-          if (echo) process.stdout.write(ch);
-        }
-      };
-      stdin.on("data", onData);
-    });
-  } finally {
-    stdin.setRawMode(wasRaw);
-    stdin.pause();
-  }
-  return buffer;
-}
-async function readPassphraseTwice() {
-  process.stdout.write(
+async function readPassphraseTwice({ newWallet = false } = {}) {
+  process2.stdout.write(
     `
 BIP-39 passphrase (the "25th word").
 
@@ -7945,41 +8646,33 @@ BIP-39 passphrase (the "25th word").
 
 `
   );
-  const first = await readInput("passphrase: ");
+  const firstRaw = await readInput("passphrase: ");
+  if (newWallet) validateNewWalletPassphrase(firstRaw);
+  else if (/[^\x20-\x7e]/.test(firstRaw)) {
+    process2.stdout.write(
+      "\n  ! Unicode recovery mode: the text will be normalized with NFKD.\n  ! Confirm the resulting wallet fingerprint against your record.\n"
+    );
+  }
+  const first = normalizePassphrase(firstRaw);
   if (first === "") {
-    process.stdout.write("Using an EMPTY passphrase (standard wallet).\n");
+    process2.stdout.write("Using an EMPTY passphrase (standard wallet).\n");
     return "";
   }
-  const second = await readInput("repeat:     ");
-  assert3.equal(first, second, "Passphrases do not match - nothing was generated");
-  const GUESS_RATE = 19e4;
-  const words = first.trim().split(/\s+/).filter(Boolean).length;
-  const classes = (/[a-z]/.test(first) ? 26 : 0) + (/[A-Z]/.test(first) ? 26 : 0) + (/[0-9]/.test(first) ? 10 : 0) + (/[^a-zA-Z0-9]/.test(first) ? 33 : 0);
-  const looksLikeWords = words >= 2 && first.trim().split(/\s+/).every((w) => /^[\p{L}'-]+$/u.test(w));
-  const bits = Math.min(
-    looksLikeWords ? words * 12.9 : first.length * Math.log2(Math.max(classes, 2)),
-    128
-  );
-  const seconds = 2 ** bits / 2 / GUESS_RATE;
-  const human = seconds < 1 ? "under a second" : seconds < 60 ? `${seconds.toFixed(0)} seconds` : seconds < 3600 ? `${(seconds / 60).toFixed(0)} minutes` : seconds < 86400 ? `${(seconds / 3600).toFixed(1)} hours` : seconds < 315e5 ? `${(seconds / 86400).toFixed(0)} days` : seconds < 315e8 ? `${(seconds / 315e5).toFixed(0)} years` : `${(seconds / 315e5).toExponential(1)} years`;
-  process.stdout.write(
-    `
-Passphrase accepted and confirmed. Rough strength: ~${bits.toFixed(0)} bits
-(upper bound - assumes you chose randomly, which people do not).
-Against ~${GUESS_RATE.toLocaleString("en-US")} guesses/s by someone who already has your
-24 words, that is about ${human}.
-`
-  );
-  if (bits < 50) {
-    process.stdout.write(
-      "\n  ! THIS IS TOO WEAK TO BE WORTH THE RISK.\n  ! A passphrase this size does not protect the paper, but forgetting\n  ! it still loses everything. Either use 4+ random words, or use none\n  ! at all - the middle ground is the worst of both.\n  ! Ctrl+C now if you want to reconsider; nothing has been generated.\n"
+  const secondRaw = await readInput("repeat:     ");
+  if (newWallet) validateNewWalletPassphrase(secondRaw);
+  const second = normalizePassphrase(secondRaw);
+  assert4.equal(first, second, "Passphrases do not match - nothing was generated");
+  process2.stdout.write("\nPassphrase accepted and confirmed.\n");
+  if (looksObviouslyWeakPassphrase(first)) {
+    process2.stdout.write(
+      "\n  ! This passphrase has an obvious weak structure or is short.\n  ! Software cannot infer how randomly a passphrase was selected and\n  ! therefore cannot assign it honest entropy or cracking-time numbers.\n  ! Use independently sampled Diceware words/random characters, or use\n  ! no passphrase. Ctrl+C now to reconsider.\n"
     );
   }
   return first;
 }
 async function readDice() {
   const bits = (n) => (n * Math.log2(6)).toFixed(1);
-  process.stdout.write(
+  process2.stdout.write(
     `
 Dice entropy. You need at least ${DICE_MIN_ROLLS} d6 rolls (= ${bits(DICE_MIN_ROLLS)} bits).
 
@@ -7990,39 +8683,39 @@ Dice entropy. You need at least ${DICE_MIN_ROLLS} d6 rolls (= ${bits(DICE_MIN_RO
   while (rolls.length < DICE_MIN_ROLLS) {
     const raw = await readInput(`rolls (${rolls.length}/${DICE_MIN_ROLLS}): `);
     if (raw.trim().toLowerCase() === "cancel") {
-      process.stdout.write("  Cancelled - continuing without dice.\n");
+      process2.stdout.write("  Cancelled - continuing without dice.\n");
       return null;
     }
     const batch = [...raw].filter((c) => c >= "1" && c <= "6").map(Number);
     const ignored = [...raw].filter((c) => !/[1-6\s,.-]/.test(c)).length;
     if (ignored > 0) {
-      process.stdout.write(`  ! ${ignored} character(s) outside 1-6 were ignored.
+      process2.stdout.write(`  ! ${ignored} character(s) outside 1-6 were ignored.
 `);
     }
     if (batch.length === 0) {
-      process.stdout.write("  ! Nothing usable in that line. Digits 1-6 only.\n");
+      process2.stdout.write("  ! Nothing usable in that line. Digits 1-6 only.\n");
       continue;
     }
     rolls.push(...batch);
     const left = DICE_MIN_ROLLS - rolls.length;
-    process.stdout.write(
+    process2.stdout.write(
       left > 0 ? `  +${batch.length}, total ${rolls.length}/${DICE_MIN_ROLLS} - ${left} to go
 ` : `  +${batch.length}, total ${rolls.length} - enough
 `
     );
   }
   const dice = diceEntropy(rolls);
-  process.stdout.write(
+  process2.stdout.write(
     `  accepted ${rolls.length} rolls = ${dice.bits.toFixed(1)} bits (chi-square ${dice.chi.toFixed(1)}, df=5)
 `
   );
   if (dice.biased) {
-    process.stdout.write(
+    process2.stdout.write(
       "  ! Chi-square is high (p < 0.001). The die may be biased or the input\n  ! mistyped. Harmless here because of the XOR, but worth a second look.\n"
     );
   }
   if (dice.tooFlat) {
-    process.stdout.write(
+    process2.stdout.write(
       "  ! Chi-square is suspiciously LOW: this distribution is flatter than\n  ! chance produces. That is what typed-from-imagination digits look\n  ! like. If you did not physically roll these, roll them.\n"
     );
   }
@@ -8031,7 +8724,7 @@ Dice entropy. You need at least ${DICE_MIN_ROLLS} d6 rolls (= ${bits(DICE_MIN_RO
 function printPhrase(phrase) {
   const words = phrase.split(" ");
   const rows = Math.ceil(words.length / 3);
-  process.stdout.write(
+  process2.stdout.write(
     "\n================================================================\n  WRITE THIS ON PAPER. DO NOT PHOTOGRAPH, COPY OR TYPE IT ELSEWHERE.\n================================================================\n\n"
   );
   for (let r = 0; r < rows; r += 1) {
@@ -8042,35 +8735,35 @@ function printPhrase(phrase) {
         cells.push(`${String(i + 1).padStart(2)}. ${words[i].padEnd(9)}`);
       }
     }
-    process.stdout.write(`    ${cells.join("   ")}
+    process2.stdout.write(`    ${cells.join("   ")}
 `);
   }
-  process.stdout.write(`
+  process2.stdout.write(`
   read-back: ${phrase}
 `);
 }
 function printAccounts(accounts, { showPrivate, showPublic }) {
   for (const account of accounts) {
-    process.stdout.write(`index:       ${account.index}
+    process2.stdout.write(`index:       ${account.index}
 `);
-    process.stdout.write(`path:        ${account.path}
+    process2.stdout.write(`path:        ${account.path}
 `);
-    process.stdout.write(`address:     ${account.address}
+    process2.stdout.write(`address:     ${account.address}
 `);
     if (showPublic) {
-      process.stdout.write(`public key:  0x${bytesToHex(account.publicKey)}
+      process2.stdout.write(`public key:  0x${bytesToHex(account.publicKey)}
 `);
     }
     if (showPrivate) {
-      process.stdout.write(`private key: 0x${account.privateKey.toString("hex")}
+      process2.stdout.write(`private key: 0x${account.privateKey.toString("hex")}
 `);
     }
-    process.stdout.write("\n");
+    process2.stdout.write("\n");
   }
 }
 function printAddressQRs(accounts) {
   const symbols = encodeAddressQRs(accounts.map((a) => a.address));
-  process.stdout.write(
+  process2.stdout.write(
     `
 ADDRESS QR (${symbols.length} symbol${symbols.length > 1 ? "s" : ""})
   Scanning these gives you the address list on a phone so you can compare
@@ -8080,22 +8773,22 @@ ADDRESS QR (${symbols.length} symbol${symbols.length > 1 ? "s" : ""})
 `
   );
   for (const { label, symbol } of symbols) {
-    process.stdout.write(`
+    process2.stdout.write(`
   ${label}  (v${symbol.version}, ${symbol.size}x${symbol.size})
 
 `);
-    process.stdout.write(`${renderQR(symbol, { quiet: 4 })}
+    process2.stdout.write(`${renderQR(symbol, { quiet: 4 })}
 `);
   }
 }
 async function offerScreenWipe() {
-  process.stdout.write(
+  process2.stdout.write(
     '\nScreen wipe. Type the word "wipe" and press Enter to clear the screen and\nthe terminal scrollback. Press Enter alone to leave the output on screen.\nDo this only AFTER writing the phrase down and verifying it with\n`npm run verify`. Cleared output cannot be recovered.\n\n'
   );
   const answer = await readInput("> ", { echo: true });
   if (answer.trim().toLowerCase() === "wipe") {
-    process.stdout.write(`${ESC}[3J${ESC}[2J${ESC}[H`);
-    process.stdout.write(
+    process2.stdout.write(`${ESC}[3J${ESC}[2J${ESC}[H`);
+    process2.stdout.write(
       "Screen and scrollback cleared. This affects THIS terminal only - it does\nnot touch tmux buffers, iTerm2 Instant Replay recordings, or any session\nlog your terminal keeps on disk.\n"
     );
   }
@@ -8103,14 +8796,14 @@ async function offerScreenWipe() {
 function parseGroupSpec(spec) {
   return spec.split(",").map((part) => {
     const m = /^([0-9]+)of([0-9]+)$/i.exec(part.trim());
-    assert3.ok(m, `Bad share specification "${part}". Use e.g. 2of3.`);
+    assert4.ok(m, `Bad share specification "${part}". Use e.g. 2of3.`);
     const threshold = Number.parseInt(m[1], 10);
     const count = Number.parseInt(m[2], 10);
-    assert3.ok(
+    assert4.ok(
       threshold >= 1 && threshold <= count && count <= 16,
       `Bad share specification "${part}": need 1 <= threshold <= count <= 16.`
     );
-    assert3.ok(
+    assert4.ok(
       !(threshold === 1 && count > 1),
       `"${part}" would make every share a full copy of the secret. Use 1of1, or raise the threshold.`
     );
@@ -8118,24 +8811,24 @@ function parseGroupSpec(spec) {
   });
 }
 function printShares(groupsOfShares, groups, groupThreshold) {
-  process.stdout.write(
+  process2.stdout.write(
     "\n================================================================\n  SLIP-39 BACKUP SHARES - WRITE ON PAPER, STORE SEPARATELY\n================================================================\n\n  These shares restore the BIP-39 ENTROPY of this wallet.\n  They are NOT a BIP-32 seed. A Trezor recovering them would show\n  DIFFERENT addresses. Recover with:  npm run combine\n\n  They do NOT contain your BIP-39 passphrase. If you set one, it must\n  be stored separately or the shares alone restore nothing.\n\n"
   );
   const need = groupThreshold === 1 ? `any ${groups[0].threshold} of the ${groups[0].count} shares below` : `any ${groupThreshold} of the ${groups.length} groups, at their thresholds`;
-  process.stdout.write(`  To restore you need: ${need}.
+  process2.stdout.write(`  To restore you need: ${need}.
 `);
-  process.stdout.write(
-    '  Fewer than that reveal NOTHING - not "less security", literally no\n  information about the secret.\n'
+  process2.stdout.write(
+    "  Fewer than that cannot restore the wallet. SLIP-39's four-byte digest\n  leaks up to about 32 bits, so for this 256-bit secret roughly 224 bits\n  remain unknown: infeasible, but not a literal zero-information claim.\n"
   );
   groupsOfShares.forEach((shares, gi) => {
-    process.stdout.write(
+    process2.stdout.write(
       `
   ---- GROUP ${gi + 1} of ${groupsOfShares.length} (need ${groups[gi].threshold} of these ${groups[gi].count}) ----
 `
     );
     shares.forEach((share, si) => {
       const words = share.split(" ");
-      process.stdout.write(`
+      process2.stdout.write(`
   Group ${gi + 1}, share ${si + 1}  (${words.length} words)
 `);
       const rows = Math.ceil(words.length / 4);
@@ -8147,17 +8840,17 @@ function printShares(groupsOfShares, groups, groupThreshold) {
             cells.push(`${String(i + 1).padStart(2)}. ${words[i].padEnd(8)}`);
           }
         }
-        process.stdout.write(`    ${cells.join("  ")}
+        process2.stdout.write(`    ${cells.join("  ")}
 `);
       }
     });
   });
-  process.stdout.write(
+  process2.stdout.write(
     "\n  Store each share in a DIFFERENT physical place. Two shares in one\n  drawer is one share with extra steps.\n"
   );
 }
 async function readShares() {
-  process.stdout.write(
+  process2.stdout.write(
     "\nType your SLIP-39 shares, one per line, from your PAPER backups.\nInput is hidden. Press Enter on an empty line when you are done.\n\n"
   );
   const shares = [];
@@ -8165,10 +8858,10 @@ async function readShares() {
     const line = await readInput(`share ${i} (empty line to finish): `);
     if (line.trim() === "") break;
     shares.push(line.trim());
-    process.stdout.write(`  accepted ${line.trim().split(/\s+/).length} words
+    process2.stdout.write(`  accepted ${line.trim().split(/\s+/).length} words
 `);
   }
-  assert3.ok(shares.length > 0, "No shares entered");
+  assert4.ok(shares.length > 0, "No shares entered");
   return shares;
 }
 function levenshtein(a, b) {
@@ -8213,10 +8906,10 @@ function repairWords(input) {
 }
 function selfTest({ quiet = false } = {}) {
   const log = (m) => {
-    if (!quiet) process.stdout.write(`  ok  ${m}
+    if (!quiet) process2.stdout.write(`  ok  ${m}
 `);
   };
-  if (!quiet) process.stdout.write("\nSELF-TEST\n");
+  if (!quiet) process2.stdout.write("\nSELF-TEST\n");
   assertWordlistIntegrity();
   log("BIP-39 English wordlist matches the published SHA-256");
   for (const vector of [
@@ -8225,7 +8918,7 @@ function selfTest({ quiet = false } = {}) {
     "0xdbF03B407c01E7cD3CBea99509d93f8DDDC8C6FB",
     "0xD1220A0cf47c7B9Be7A2E6BA89F429762e7b9aDb"
   ]) {
-    assert3.equal(toChecksumAddress(vector.slice(2).toLowerCase()), vector);
+    assert4.equal(toChecksumAddress(vector.slice(2).toLowerCase()), vector);
   }
   log("EIP-55 checksum matches all four official vectors");
   const zeroEntropy = new Uint8Array(32);
@@ -8235,29 +8928,29 @@ function selfTest({ quiet = false } = {}) {
     "hex"
   );
   const phrase = entropyToMnemonic(zeroEntropy, wordlist);
-  assert3.equal(phrase, expectedPhrase);
-  assert3.equal(validateMnemonic(phrase, wordlist), true);
-  assert3.equal(bytesToHex(mnemonicToEntropy(phrase, wordlist)), "00".repeat(32));
-  assert3.ok(equalBytes(mnemonicToSeedSync(phrase, "TREZOR"), expectedSeed));
+  assert4.equal(phrase, expectedPhrase);
+  assert4.equal(validateMnemonic(phrase, wordlist), true);
+  assert4.equal(bytesToHex(mnemonicToEntropy(phrase, wordlist)), "00".repeat(32));
+  assert4.ok(equalBytes(mnemonicToSeedSync(phrase, "TREZOR"), expectedSeed));
   log("BIP-39 256-bit vector: mnemonic, checksum, PBKDF2 seed");
-  assert3.equal(refEntropyToMnemonic(zeroEntropy, wordlist), expectedPhrase);
-  assert3.ok(equalBytes(refMnemonicToSeed(phrase, "TREZOR"), expectedSeed));
+  assert4.equal(refEntropyToMnemonic(zeroEntropy, wordlist), expectedPhrase);
+  assert4.ok(equalBytes(refMnemonicToSeed(phrase, "TREZOR"), expectedSeed));
   log("reference BIP-39 implementation reproduces the same vector");
   const devPhrase = "test test test test test test test test test test test junk";
-  assert3.equal(validateMnemonic(devPhrase, wordlist), true);
+  assert4.equal(validateMnemonic(devPhrase, wordlist), true);
   const devSeed = mnemonicToSeedSync(devPhrase);
   const devKey = HDKey.fromMasterSeed(devSeed).derive("m/44'/60'/0'/0/0");
-  assert3.equal(
+  assert4.equal(
     `0x${bytesToHex(devKey.privateKey)}`,
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
   );
-  assert3.equal(
+  assert4.equal(
     addressFromPrivateKey(devKey.privateKey).address,
     "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
   );
   log("BIP-32 + EVM address vector: Hardhat account 0, mixed-case checksum");
-  assert3.ok(equalBytes(refDerive(devSeed, "m/44'/60'/0'/0/0"), devKey.privateKey));
-  assert3.equal(
+  assert4.ok(equalBytes(refDerive(devSeed, "m/44'/60'/0'/0/0"), devKey.privateKey));
+  assert4.equal(
     refFingerprint(devSeed),
     `0x${(HDKey.fromMasterSeed(devSeed).fingerprint >>> 0).toString(16).padStart(8, "0")}`
   );
@@ -8271,30 +8964,30 @@ function selfTest({ quiet = false } = {}) {
       accounts,
       fingerprint
     });
-    assert3.equal(new Set(accounts.map((a) => a.address)).size, accounts.length);
-    for (const a of accounts) assert3.match(a.address, /^0x[0-9A-Fa-f]{40}$/);
+    assert4.equal(new Set(accounts.map((a) => a.address)).size, accounts.length);
+    for (const a of accounts) assert4.match(a.address, /^0x[0-9A-Fa-f]{40}$/);
     dispose();
     log(`scheme "${scheme}" (${templateFor(scheme)}) cross-checks clean`);
   }
   const withPass = HDKey.fromMasterSeed(mnemonicToSeedSync(devPhrase, "x")).derive(
     "m/44'/60'/0'/0/0"
   );
-  assert3.ok(!equalBytes(withPass.privateKey, devKey.privateKey));
+  assert4.ok(!equalBytes(withPass.privateKey, devKey.privateKey));
   log("BIP-39 passphrase produces a different wallet");
-  assert3.throws(
+  assert4.throws(
     () => healthTest("stuck", Buffer.alloc(4096)),
     /repetition count/,
     "health test failed to reject an all-zero source"
   );
   const skewed = Buffer.alloc(4096);
   for (let i = 0; i < skewed.length; i += 1) skewed[i] = i % 2 ? 255 : 254;
-  assert3.throws(
+  assert4.throws(
     () => healthTest("skewed", skewed),
     /adaptive proportion|monobit/,
     "health test failed to reject a skewed source"
   );
-  assert3.throws(() => diceEntropy([1, 2, 3]), /at least/, "dice minimum not enforced");
-  assert3.throws(
+  assert4.throws(() => diceEntropy([1, 2, 3]), /at least/, "dice minimum not enforced");
+  assert4.throws(
     () => crossCheck({
       phrase: devPhrase,
       passphrase: "",
@@ -8311,18 +9004,18 @@ function selfTest({ quiet = false } = {}) {
     /CROSS-CHECK FAILED/,
     "cross-check failed to reject a tampered key"
   );
-  assert3.throws(() => parsePath("x/1"), /must start with/, "path parser too permissive");
-  assert3.notEqual(refEntropyToMnemonic(Buffer.alloc(32, 1), wordlist), expectedPhrase);
+  assert4.throws(() => parsePath("x/1"), /must start with/, "path parser too permissive");
+  assert4.notEqual(refEntropyToMnemonic(Buffer.alloc(32, 1), wordlist), expectedPhrase);
   log("negative tests: health, dice, cross-check and path guards all fire");
   slip39SelfTest({ vectors: slip39_vectors_default, fixtures: slip39_fixtures_default, log });
   qrSelfTest({ log });
   const repaired = repairWords("aban ABANDON  abandonx");
-  assert3.equal(repaired.words[0], "abandon");
-  assert3.equal(repaired.words[1], "abandon");
-  assert3.equal(repaired.problems.length, 1);
+  assert4.equal(repaired.words[0], "abandon");
+  assert4.equal(repaired.words[1], "abandon");
+  assert4.equal(repaired.problems.length, 1);
   log("mnemonic repair: prefix expansion and typo detection");
   if (!quiet) {
-    process.stdout.write("\nSelf-test OK - all vectors and negative tests passed.\n");
+    process2.stdout.write("\nSelf-test OK - all vectors and negative tests passed.\n");
   }
 }
 async function proveSandbox() {
@@ -8339,10 +9032,10 @@ async function proveSandbox() {
       });
     }
   };
-  process.stdout.write("\nSANDBOX PROOF\n");
-  if (!process.permission) {
-    process.stdout.write(
-      "  x   Permission model is OFF - nothing below is enforced.\n      Run this through `npm run prove-sandbox`, which passes --permission.\n"
+  process2.stdout.write("\nTRUSTED-CODE CAPABILITY GUARD\n");
+  if (!process2.permission) {
+    process2.stdout.write(
+      "  x   Permission model is OFF - nothing below is enforced.\n      Run this through `npm run prove-guard`, which passes --permission.\n"
     );
   }
   await probe("network: fetch()", () => fetch("http://127.0.0.1:1"));
@@ -8358,49 +9051,54 @@ async function proveSandbox() {
     const wt = await import("node:worker_threads");
     new wt.Worker("", { eval: true });
   });
-  await probe("file write", () => fs.writeFileSync("/tmp/heatdeath-sandbox-probe", "x"));
+  await probe("file write", () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "heatdeath-capability-probe-")
+    );
+    fs.rmdirSync(directory);
+  });
   await probe("read outside the package", () => fs.readFileSync(`${os.homedir()}/.ssh/id_rsa`));
   for (const row of rows) {
-    process.stdout.write(
+    process2.stdout.write(
       `  ${row.ok ? "ok " : "FAIL"}  ${row.name.padEnd(26)} ${row.detail}
 `
     );
   }
   const sample = readUrandom(32);
-  process.stdout.write(
+  process2.stdout.write(
     `
   ok    /dev/urandom readable (${sample.length} bytes) - required for entropy
 `
   );
   sample.fill(0);
   const denied = rows.filter((r) => r.ok).length;
-  process.stdout.write(
+  process2.stdout.write(
     `
 ${denied}/${rows.length} capability probes denied by the runtime.
 `
   );
-  process.stdout.write(
-    "\nNOTE: inside a prebuilt binary this output proves nothing. The binary\ncontains this source as plain text and can be patched, and a patched\nbuild will happily print the same line. Self-attestation from an\nartifact an attacker controls is circular. Trust this result only when\nyou ran it from source you read, or from a build you reproduced\nyourself - see docs/en/VERIFY.md.\n"
+  process2.stdout.write(
+    "\nSCOPE: this is not a malicious-code sandbox. Permission checks are a\nseatbelt for code whose provenance you already trust. A signed but\nmalicious program can attack its own process and secret memory.\n\nNOTE: inside a prebuilt binary this output proves nothing. The binary\ncontains this source as plain text and can be patched, and a patched\nbuild will happily print the same line. Self-attestation from an\nartifact an attacker controls is circular. Trust this result only when\nyou ran it from source you read, or from a build you reproduced\nyourself - see docs/en/VERIFY.md.\n"
   );
   if (denied !== rows.length) {
-    throw new Error("the sandbox is NOT fully enforced - see the FAIL rows above");
+    throw new Error("the capability guard is NOT fully enforced - see FAIL rows above");
   }
 }
 async function generate({ showPrivate, showPublic, scheme, count, useDice, wipe, qr }) {
   assertRuntime();
   selfTest({ quiet: true });
-  process.stdout.write("\nSelf-test OK (run `npm run self-test` to see every vector).\n");
+  process2.stdout.write("\nSelf-test OK (run `npm run self-test` to see every vector).\n");
   const dice = useDice ? await readDice() : null;
   const { entropy, report } = collectEntropy({ dice });
-  process.stdout.write("\nENTROPY SOURCES\n");
-  for (const r of report) process.stdout.write(`  - ${r.name.padEnd(16)} ${r.status}
+  process2.stdout.write("\nENTROPY SOURCES\n");
+  for (const r of report) process2.stdout.write(`  - ${r.name.padEnd(16)} ${r.status}
 `);
-  process.stdout.write(
+  process2.stdout.write(
     `  = ${ENTROPY_BYTES * 8} bits, combined by XOR of domain-separated SHA-256
 `
   );
   if (!useDice) {
-    process.stdout.write(
+    process2.stdout.write(
       "  ! No dice used. Every source above lives on this machine. Consider\n  ! `npm run generate:dice` for a source independent of it.\n"
     );
   }
@@ -8408,62 +9106,63 @@ async function generate({ showPrivate, showPublic, scheme, count, useDice, wipe,
   let bundle = null;
   try {
     const phrase = entropyToMnemonic(entropy, wordlist);
-    assert3.equal(phrase.split(" ").length, 24);
-    assert3.equal(validateMnemonic(phrase, wordlist), true);
-    assert3.ok(
+    assert4.equal(phrase.split(" ").length, 24);
+    assert4.equal(validateMnemonic(phrase, wordlist), true);
+    assert4.ok(
       equalBytes(mnemonicToEntropy(phrase, wordlist), entropy),
       "ROUND-TRIP FAILED: the mnemonic does not reconstruct the generated entropy"
     );
-    const passphrase = await readPassphraseTwice();
+    const passphrase = await readPassphraseTwice({ newWallet: true });
     seed = mnemonicToSeedSync(phrase, passphrase);
     bundle = primaryAccounts(seed, scheme, count);
     const { accounts, fingerprint } = bundle;
     crossCheck({ entropy, phrase, passphrase, seed, accounts, fingerprint });
-    assert3.equal(
+    assert4.equal(
       new Set(accounts.map((a) => a.address)).size,
       accounts.length,
       "Duplicate addresses in derivation output"
     );
-    process.stdout.write("\nVERIFICATION\n");
-    process.stdout.write("  ok  round-trip: the mnemonic reconstructs the exact entropy\n");
-    process.stdout.write(
+    process2.stdout.write("\nVERIFICATION\n");
+    process2.stdout.write("  ok  round-trip: the mnemonic reconstructs the exact entropy\n");
+    process2.stdout.write(
       "  ok  cross-check: independent BIP-39/BIP-32 implementation agrees\n"
     );
-    process.stdout.write(`  ok  ${accounts.length} distinct addresses derived
+    process2.stdout.write(`  ok  ${accounts.length} distinct addresses derived
 `);
     printPhrase(phrase);
-    process.stdout.write(
+    process2.stdout.write(
       `
   BIP-39 passphrase:  ${passphrase ? "SET (not shown)" : "empty"}
 `
     );
-    process.stdout.write(
+    process2.stdout.write(
       `  derivation scheme:  ${scheme} - ${templateFor(scheme)}
 `
     );
-    process.stdout.write(
+    process2.stdout.write(
       `  master fingerprint: ${fingerprint}  (not secret; use it to confirm a restore)
 
 `
     );
     if (PATH_SCHEMES[scheme].linkable) {
-      process.stdout.write(
+      process2.stdout.write(
         "  ! Privacy: every address below shares one extended public key. Anyone\n  ! holding it can link them all to a single wallet. Use --scheme=account\n  ! for addresses that are not linkable this way.\n\n"
       );
     }
     printAccounts(accounts, { showPrivate, showPublic });
+    if (qr) printAddressQRs(accounts);
     if (!showPublic) {
-      process.stdout.write(
+      process2.stdout.write(
         "Public keys were not printed. Publishing the public key of an address that\nhas never sent a transaction removes its 160-bit hash barrier against a\nfuture quantum attack. Use --show-public only if you truly need them.\n"
       );
     }
     if (!showPrivate) {
-      process.stdout.write(
+      process2.stdout.write(
         "Private keys were not printed. The mnemonic already controls every derived\naccount, so exporting individual keys usually only adds risk.\n"
       );
     }
     const verifyCmd = scheme === DEFAULT_SCHEME ? "npm run verify" : `npm run verify:${scheme}`;
-    process.stdout.write(
+    process2.stdout.write(
       `
 NEXT STEP - verify what you wrote, before funding anything:
     ${verifyCmd}
@@ -8474,7 +9173,7 @@ PAPER, not from this screen.
 `
     );
     if (accounts.length >= 2) {
-      process.stdout.write(
+      process2.stdout.write(
         `    index 1 address      ${accounts[1].address}
 
 Confirm BOTH. The fingerprint and the index 0 address are identical
@@ -8483,7 +9182,7 @@ the scheme you actually generated with.
 `
       );
     } else {
-      process.stdout.write(
+      process2.stdout.write(
         `
 Only one account was derived, and index 0 is the same path under both
 schemes - so this run cannot prove which scheme you used. Verify with
@@ -8505,65 +9204,65 @@ schemes - so this run cannot prove which scheme you used. Verify with
 async function verify({ scheme, count, showPrivate, showPublic, qr }) {
   assertRuntime();
   selfTest({ quiet: true });
-  process.stdout.write("\nSelf-test OK.\n");
-  process.stdout.write(
+  process2.stdout.write("\nSelf-test OK.\n");
+  process2.stdout.write(
     "\nType the recovery phrase FROM YOUR PAPER BACKUP. Input is hidden.\nUnambiguous abbreviations of 3+ letters are expanded automatically, and\nunknown words are reported with their nearest wordlist candidates.\n\n"
   );
   const raw = await readInput("phrase: ");
   const { words, notes, problems } = repairWords(raw);
   if (notes.length > 0) {
-    process.stdout.write("\nEXPANSIONS\n");
-    for (const n of notes) process.stdout.write(`${n}
+    process2.stdout.write("\nEXPANSIONS\n");
+    for (const n of notes) process2.stdout.write(`${n}
 `);
   }
   if (problems.length > 0) {
-    process.stdout.write("\nPROBLEMS\n");
-    for (const p of problems) process.stdout.write(`${p}
+    process2.stdout.write("\nPROBLEMS\n");
+    for (const p of problems) process2.stdout.write(`${p}
 `);
     throw new Error(`${problems.length} word(s) are not valid BIP-39 words`);
   }
-  assert3.ok(
+  assert4.ok(
     [12, 15, 18, 21, 24].includes(words.length),
     `A BIP-39 phrase has 12/15/18/21/24 words; you entered ${words.length}`
   );
   const phrase = words.join(" ");
-  assert3.equal(
+  assert4.equal(
     validateMnemonic(phrase, wordlist),
     true,
     "CHECKSUM FAILED. Every word is a valid BIP-39 word, but the phrase as a whole is not - a word is in the wrong position, or one word is wrong. Re-read the paper carefully; the order matters."
   );
-  process.stdout.write(`
+  process2.stdout.write(`
   ok  ${words.length} valid words, BIP-39 checksum correct
 `);
   const passphrase = await readPassphraseTwice();
   const seed = mnemonicToSeedSync(phrase, passphrase);
   const { accounts, fingerprint, dispose } = primaryAccounts(seed, scheme, count);
   crossCheck({ entropy: null, phrase, passphrase, seed, accounts, fingerprint });
-  process.stdout.write("  ok  cross-check: independent implementation agrees\n");
-  process.stdout.write(
+  process2.stdout.write("  ok  cross-check: independent implementation agrees\n");
+  process2.stdout.write(
     `
   BIP-39 passphrase:  ${passphrase ? "SET (not shown)" : "empty"}
 `
   );
-  process.stdout.write(
+  process2.stdout.write(
     `  derivation scheme:  ${scheme} - ${templateFor(scheme)}
 `
   );
-  process.stdout.write(`  master fingerprint: ${fingerprint}
+  process2.stdout.write(`  master fingerprint: ${fingerprint}
 `);
-  process.stdout.write(
+  process2.stdout.write(
     "  note: the fingerprint and the index 0 address are identical under both\n        schemes. Only index 1 and above tell them apart.\n\n"
   );
   printAccounts(accounts, { showPrivate, showPublic });
   if (qr) printAddressQRs(accounts);
-  process.stdout.write(
+  process2.stdout.write(
     "If the fingerprint and the addresses match what you recorded, the paper\nbackup is correct. If they do not, the phrase you typed is NOT the one you\ngenerated - do not fund it.\n"
   );
   dispose();
   for (const a of accounts) a.privateKey.fill(0);
   seed.fill(0);
 }
-var useColour = () => Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
+var useColour = () => Boolean(process2.stdout.isTTY) && !process2.env.NO_COLOR;
 var paint = (code, text) => useColour() ? `${ESC}[${code}m${text}${ESC}[0m` : text;
 var bold = (t) => paint("1", t);
 var dim = (t) => paint("2", t);
@@ -8571,7 +9270,7 @@ var red = (t) => paint("31", t);
 var green = (t) => paint("32", t);
 var yellow = (t) => paint("33", t);
 function step(number, total, title) {
-  process.stdout.write(
+  process2.stdout.write(
     `
 ${bold(`${ESC}[7m STEP ${number}/${total} ${ESC}[0m`)} ${bold(title)}
 ${dim("-".repeat(64))}
@@ -8586,10 +9285,10 @@ async function blindReadBack(phrase) {
   const words = phrase.split(" ");
   while (!await confirm(`
 ${yellow("Written it down on paper?")} Type`, "written")) {
-    process.stdout.write(dim("  Take your time. The phrase is still on screen above.\n"));
+    process2.stdout.write(dim("  Take your time. The phrase is still on screen above.\n"));
   }
-  process.stdout.write(`${ESC}[3J${ESC}[2J${ESC}[H`);
-  process.stdout.write(
+  process2.stdout.write(`${ESC}[3J${ESC}[2J${ESC}[H`);
+  process2.stdout.write(
     `${bold("READ-BACK CHECK")}
 The phrase is off the screen. Type it from your PAPER - not from memory,
 and not by scrolling back. Input is hidden.
@@ -8602,19 +9301,19 @@ and not by scrolling back. Input is hidden.
       continue;
     }
     const { words: fixed, notes, problems } = repairWords(typed);
-    for (const note of notes) process.stdout.write(dim(`${note}
+    for (const note of notes) process2.stdout.write(dim(`${note}
 `));
-    for (const problem of problems) process.stdout.write(red(`${problem}
+    for (const problem of problems) process2.stdout.write(red(`${problem}
 `));
     const mismatches = [];
     for (let i = 0; i < Math.max(words.length, fixed.length); i += 1) {
       if (fixed[i] !== words[i]) mismatches.push(i + 1);
     }
     if (mismatches.length === 0) {
-      process.stdout.write(green("\n  MATCH. Your paper reproduces the phrase exactly.\n"));
+      process2.stdout.write(green("\n  MATCH. Your paper reproduces the phrase exactly.\n"));
       return;
     }
-    process.stdout.write(
+    process2.stdout.write(
       red(`
   MISMATCH at word ${mismatches.join(", ")}.
 `) + "  Your paper is wrong; the generated phrase is correct. Fix the paper:\n"
@@ -8622,12 +9321,12 @@ and not by scrolling back. Input is hidden.
     for (const position of mismatches.slice(0, 24)) {
       const expected = words[position - 1] ?? "(missing)";
       const got = fixed[position - 1] ?? "(missing)";
-      process.stdout.write(
+      process2.stdout.write(
         `    ${String(position).padStart(2)}. correct: ${bold(expected)}   you typed: ${red(got)}
 `
       );
     }
-    process.stdout.write(dim("\n  Correct the paper, then type it again.\n"));
+    process2.stdout.write(dim("\n  Correct the paper, then type it again.\n"));
   }
 }
 async function wizard(cli) {
@@ -8635,10 +9334,10 @@ async function wizard(cli) {
   step(1, TOTAL, "Environment and integrity");
   assertRuntime();
   selfTest({ quiet: true });
-  process.stdout.write(
-    green("  ok  ") + "known-answer vectors passed before any secret exists\n" + (process.permission ? green("  ok  ") + "runtime sandbox active (`npm run prove-sandbox` to see it)\n" : yellow("  !   ") + "permission model OFF - prefer `npm run wizard`\n")
+  process2.stdout.write(
+    green("  ok  ") + "known-answer vectors passed before any secret exists\n" + (process2.permission ? green("  ok  ") + "capability guard active (`npm run prove-guard` to inspect it)\n" : yellow("  !   ") + "capability guard OFF - prefer signed npm commands\n")
   );
-  process.stdout.write(
+  process2.stdout.write(
     "\n" + bold("Before continuing, confirm you have:") + "\n  * turned off Wi-Fi, Ethernet and Bluetooth\n  * disabled iTerm2 Instant Replay and unlimited scrollback\n  * quit clipboard managers (Raycast, Paste, Alfred)\n  * paper and pen in front of you\n" + dim("  Details: QUICKSTART.md\n")
   );
   if (!await confirm("\nAll of the above done? Type", "ready")) {
@@ -8646,8 +9345,8 @@ async function wizard(cli) {
   }
   step(2, TOTAL, "Entropy");
   let dice = null;
-  process.stdout.write(
-    bold("Both answers give you a secure wallet. The difference is what you\nare trusting.\n\n") + `  ${bold("no")}  - 256 bits from three OS sources with health checks.
+  process2.stdout.write(
+    bold("Both answers give you a secure wallet. The difference is what you\nare trusting.\n\n") + `  ${bold("no")}  - 256 bits from two required OS paths with health checks.
         Fully automatic, takes seconds. This is what most people do.
 
   ${bold("yes")} - the same, PLUS numbers from a real die you roll yourself,
@@ -8663,15 +9362,15 @@ the result worse.
   if (await confirm("Roll dice yourself? Type", "yes")) {
     dice = await readDice();
   } else {
-    process.stdout.write(
+    process2.stdout.write(
       yellow("  !   ") + "Continuing without dice. Every remaining source lives on\n      this machine, so you are trusting it completely.\n"
     );
   }
   const { entropy, report } = collectEntropy({ dice });
-  for (const r of report) process.stdout.write(`  ${green("ok")}  ${r.name.padEnd(16)} ${r.status}
+  for (const r of report) process2.stdout.write(`  ${green("ok")}  ${r.name.padEnd(16)} ${r.status}
 `);
   step(3, TOTAL, "Passphrase - the optional 25th word");
-  process.stdout.write(
+  process2.stdout.write(
     bold("Both answers give you a secure wallet. The difference is what happens\nif someone finds your paper.\n\n") + `  ${bold("empty")} - the paper IS the wallet. Whoever reads those 24 words takes
           the funds. Opens in every wallet, MetaMask included.
 
@@ -8687,11 +9386,11 @@ the result worse.
 
 ` + yellow("  A short passphrase is the worst option of the three: too weak to\n  protect the paper, still strong enough to lose the funds if you\n  forget it.\n")
   );
-  const passphrase = await readPassphraseTwice();
+  const passphrase = await readPassphraseTwice({ newWallet: true });
   step(4, TOTAL, "Generation");
   const phrase = entropyToMnemonic(entropy, wordlist);
-  assert3.equal(validateMnemonic(phrase, wordlist), true);
-  assert3.ok(
+  assert4.equal(validateMnemonic(phrase, wordlist), true);
+  assert4.ok(
     equalBytes(mnemonicToEntropy(phrase, wordlist), entropy),
     "ROUND-TRIP FAILED: the mnemonic does not reconstruct the generated entropy"
   );
@@ -8706,13 +9405,13 @@ the result worse.
       accounts: bundle.accounts,
       fingerprint: bundle.fingerprint
     });
-    process.stdout.write(
+    process2.stdout.write(
       green("  ok  ") + "round-trip and independent cross-check both agree\n"
     );
     printPhrase(phrase);
     step(5, TOTAL, "Read-back - this is the step people skip");
     await blindReadBack(phrase);
-    process.stdout.write(
+    process2.stdout.write(
       `
   master fingerprint: ${bold(bundle.fingerprint)}
   scheme:             ${cli.scheme} - ${templateFor(cli.scheme)}
@@ -8725,8 +9424,8 @@ the result worse.
     });
     if (cli.qr) printAddressQRs(bundle.accounts.slice(0, cli.count));
     step(6, TOTAL, "Backup against loss");
-    process.stdout.write(
-      "One piece of paper is a single point of failure, and losing it is more\nlikely than any attack. SLIP-39 splits the wallet into shares: any two\nof three restore it, one alone reveals nothing.\n\n" + dim("  Shares carry the entropy, NOT your passphrase. Store them apart.\n\n")
+    process2.stdout.write(
+      "One piece of paper is a single point of failure, and losing it is more\nlikely than any attack. SLIP-39 splits the wallet into shares: any two\nof three restore it. One alone leaves about 224 bits unknown; the\nSLIP-39 digest prevents a literal zero-information claim.\n\n" + dim("  Shares carry the entropy, NOT your passphrase. Store them apart.\n\n")
     );
     if (await confirm("Create 2-of-3 shares now? Type", "yes")) {
       const rng = makeShamirRng();
@@ -8742,18 +9441,18 @@ the result worse.
           rng
         });
         for (const subset of admissibleSubsets(1, groups, shares)) {
-          assert3.ok(
+          assert4.ok(
             equalBytes(combineShares(subset, ""), entropy),
             "ROUND-TRIP FAILED: a valid subset of shares does not restore the entropy"
           );
         }
-        process.stdout.write(green("\n  ok  ") + "all 3 share combinations verified\n");
+        process2.stdout.write(green("\n  ok  ") + "all 3 share combinations verified\n");
         printShares(shares, groups, 1);
       } finally {
         rng.dispose();
       }
     }
-    process.stdout.write(
+    process2.stdout.write(
       `
 ${bold("DONE.")} Before you move meaningful funds:
   1. Import the phrase into your wallet. The addresses must match.
@@ -8773,7 +9472,7 @@ ${bold("DONE.")} Before you move meaningful funds:
 async function exportToOnePassword({ scheme, count, dryRun }) {
   assertRuntime();
   selfTest({ quiet: true });
-  process.stdout.write("\nSelf-test OK.\n");
+  process2.stdout.write("\nSelf-test OK.\n");
   let spawn;
   try {
     ({ spawn } = await import("node:child_process"));
@@ -8807,23 +9506,14 @@ async function exportToOnePassword({ scheme, count, dryRun }) {
       "the 1Password CLI (op) was not found on PATH. Install it and enable its desktop-app integration, then try again."
     );
   }
-  const send = (vault, payload, preview) => {
-    const script = `exec ${CAT} | "$1" item create --vault "$2" --format=json ${preview ? "--dry-run " : ""}-`;
-    const child = spawn(SH, ["-c", script, "sh", opPath, vault], {
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    const done = collect(child);
-    child.stdin.end(payload);
-    return done;
-  };
-  process.stdout.write("\nChecking the 1Password CLI...\n");
+  process2.stdout.write("\nChecking the 1Password CLI...\n");
   const version = await run(opPath, ["--version"]);
   if (version.code !== 0) {
     throw new Error(
       "`op` is not available. Install the 1Password CLI and enable its desktop-app integration, then try again."
     );
   }
-  process.stdout.write(`  ok  op ${version.out.trim()} at ${opPath}
+  process2.stdout.write(`  ok  op ${version.out.trim()} at ${opPath}
 `);
   const vaults = await run(opPath, ["vault", "list", "--format=json"]);
   if (vaults.code !== 0) {
@@ -8832,20 +9522,20 @@ async function exportToOnePassword({ scheme, count, dryRun }) {
     );
   }
   const vaultList = JSON.parse(vaults.out).map((v) => v.name);
-  process.stdout.write(`  ok  ${vaultList.length} vault(s): ${vaultList.join(", ")}
+  process2.stdout.write(`  ok  ${vaultList.length} vault(s): ${vaultList.join(", ")}
 `);
-  process.stdout.write(
+  process2.stdout.write(
     "\n" + bold("READ THIS BEFORE CONTINUING") + "\nThis writes the COMPLETE wallet into 1Password: the 24 words, the\nprivate keys, and all three SLIP-39 shares together in one item.\n\n" + yellow("  Three shares in one vault are not a threshold backup. They are the\n  secret in one place. Anyone who opens this item owns the wallet.\n\n") + "  That is acceptable for a short-lived staging buffer - the thing you\n  are doing right now - and it is not acceptable as storage. Move the\n  contents where they belong and DELETE THE ITEM. The command to delete\n  it is printed at the end.\n\n  Also: the seed leaves this machine. 1Password syncs it, encrypted, to\n  its servers, and decrypts it on every device where you unlock the\n  vault.\n"
   );
   if (dryRun) {
-    process.stdout.write(
+    process2.stdout.write(
       green("\n  DRY RUN") + " - op will preview the item and write nothing.\n  The prompts below are identical to the real run on purpose: a\n  rehearsal that skips steps rehearses the wrong thing.\n"
     );
   }
   if (!await confirm("\nUnderstood, continue? Type", "yes")) {
     throw new Error("cancelled - nothing was written");
   }
-  process.stdout.write(
+  process2.stdout.write(
     "\n" + bold("What do you want to stage?") + `
 
   ${bold("new")}      - generate a fresh wallet right now and stage it.
@@ -8861,53 +9551,53 @@ async function exportToOnePassword({ scheme, count, dryRun }) {
     const answer = (await readInput("new or existing? ", { echo: true })).trim().toLowerCase();
     if (answer === "new") fresh = true;
     else if (answer === "existing") fresh = false;
-    else process.stdout.write(dim("  Type exactly `new` or `existing`.\n"));
+    else process2.stdout.write(dim("  Type exactly `new` or `existing`.\n"));
   }
   let phrase;
   let entropy;
   let passphrase;
   if (fresh) {
-    process.stdout.write(
-      yellow("\n  Note: generating here means the seed is born in this process,\n  which runs at 5/6 because it may spawn `op`. Generating with\n  `npm run wizard` instead keeps the full 6/6 sandbox - but then\n  the phrase has to be typed back in here, which is its own\n  exposure. Neither is free; pick the one you prefer.\n")
+    process2.stdout.write(
+      yellow("\n  Note: generating here means the seed is born in this process,\n  which runs at 5/6 because it may spawn `op`. Generating with\n  `npm run wizard` instead keeps the full 6/6 guard - but then\n  the phrase has to be typed back in here, which is its own\n  exposure. Neither is free; pick the one you prefer.\n")
     );
     const dice = await confirm("\nRoll dice for extra entropy? Type", "yes") ? await readDice() : null;
     const collected = collectEntropy({ dice });
     for (const r of collected.report) {
-      process.stdout.write(`  ${green("ok")}  ${r.name.padEnd(16)} ${r.status}
+      process2.stdout.write(`  ${green("ok")}  ${r.name.padEnd(16)} ${r.status}
 `);
     }
     entropy = collected.entropy;
     if (dice) dice.bytes.fill(0);
     phrase = entropyToMnemonic(entropy, wordlist);
-    assert3.equal(phrase.split(" ").length, 24);
-    assert3.equal(validateMnemonic(phrase, wordlist), true);
-    assert3.ok(
+    assert4.equal(phrase.split(" ").length, 24);
+    assert4.equal(validateMnemonic(phrase, wordlist), true);
+    assert4.ok(
       equalBytes(mnemonicToEntropy(phrase, wordlist), entropy),
       "ROUND-TRIP FAILED: the mnemonic does not reconstruct the generated entropy"
     );
-    passphrase = await readPassphraseTwice();
+    passphrase = await readPassphraseTwice({ newWallet: true });
     printPhrase(phrase);
-    process.stdout.write(
+    process2.stdout.write(
       yellow("\n  Write this on paper NOW, before it goes into 1Password.\n") + "  The 1Password item is a staging buffer you are going to delete;\n  the paper is what survives.\n"
     );
     while (!await confirm("\nWritten it down? Type", "written")) {
-      process.stdout.write(dim("  The phrase is still on screen above.\n"));
+      process2.stdout.write(dim("  The phrase is still on screen above.\n"));
     }
   } else {
-    process.stdout.write(
+    process2.stdout.write(
       "\nType the recovery phrase to stage, FROM YOUR PAPER. Input is hidden.\n\n"
     );
     const raw = await readInput("phrase: ");
     const { words, notes, problems } = repairWords(raw);
-    for (const note of notes) process.stdout.write(dim(`${note}
+    for (const note of notes) process2.stdout.write(dim(`${note}
 `));
     if (problems.length > 0) {
-      for (const problem of problems) process.stdout.write(red(`${problem}
+      for (const problem of problems) process2.stdout.write(red(`${problem}
 `));
       throw new Error(`${problems.length} word(s) are not valid BIP-39 words`);
     }
     phrase = words.join(" ");
-    assert3.equal(
+    assert4.equal(
       validateMnemonic(phrase, wordlist),
       true,
       "CHECKSUM FAILED - a word is wrong or out of order. Nothing was written."
@@ -8920,7 +9610,7 @@ async function exportToOnePassword({ scheme, count, dryRun }) {
   const rng = makeShamirRng();
   try {
     crossCheck({ entropy, phrase, passphrase, seed, accounts, fingerprint });
-    process.stdout.write("\n  ok  cross-check: independent implementation agrees\n");
+    process2.stdout.write("\n  ok  cross-check: independent implementation agrees\n");
     const groups = parseGroupSpec("2of3");
     const shares = splitSecretIntoShares({
       secret: entropy,
@@ -8932,13 +9622,13 @@ async function exportToOnePassword({ scheme, count, dryRun }) {
       rng
     });
     for (const subset of admissibleSubsets(1, groups, shares)) {
-      assert3.ok(
+      assert4.ok(
         equalBytes(combineShares(subset, ""), entropy),
         "ROUND-TRIP FAILED: a valid subset of shares does not restore the entropy"
       );
     }
-    process.stdout.write("  ok  all 3 SLIP-39 share combinations verified\n");
-    process.stdout.write(
+    process2.stdout.write("  ok  all 3 SLIP-39 share combinations verified\n");
+    process2.stdout.write(
       `
   master fingerprint: ${bold(fingerprint)}
   index 1 address:    ${bold(accounts[1]?.address ?? accounts[0].address)}
@@ -8984,47 +9674,58 @@ Created by HEATDEATH, derivation ${templateFor(scheme)}, ${stamp}.`
       });
     });
     const vault = vaultList.includes("Private") ? "Private" : vaultList[0];
-    process.stdout.write(
+    process2.stdout.write(
       `
 Writing ${fields.length} fields to vault ${bold(vault)}.
 Route: this process -> cat -> op, all on stdin. Never an argument,
 never an environment variable, never a file on disk.
 ` + dim("(cat is there because op refuses the socket Node hands a child;\n the shell pipe between them is a real one. See the source.)\n1Password may ask you to authorise this.\n")
     );
-    const payload = JSON.stringify({ title, category: "SECURE_NOTE", fields });
-    const created = await send(vault, payload, dryRun);
+    const payload = Buffer.from(
+      JSON.stringify({ title, category: "SECURE_NOTE", fields }),
+      "utf8"
+    );
+    let created;
+    try {
+      created = await sendSecretPayload({
+        spawn,
+        shell: SH,
+        cat: CAT,
+        opPath,
+        vault,
+        payload,
+        preview: dryRun
+      });
+    } finally {
+      payload.fill(0);
+    }
     if (created.code !== 0) {
-      const secrets = fields.map((f) => f.value).filter((v) => v && v.length > 8);
-      const detail = created.err.trim().split("\n").slice(0, 3).join(" ");
-      const safe = detail && !secrets.some((x) => detail.includes(x));
       throw new Error(
-        "op item create failed" + (safe ? `: ${detail}` : " (its message is withheld - it echoed input)") + '\n  Check: 1Password unlocked, and Settings > Developer >\n  "Integrate with 1Password CLI" enabled. Try `op vault list`\n  in a terminal first - it will prompt for authorisation.'
+        `op item create failed (exit ${created.code}); its stderr is withheld because it handled secret input.
+
+  Check: 1Password unlocked, and Settings > Developer >
+  "Integrate with 1Password CLI" enabled. Try \`op vault list\`
+  in a terminal first - it will prompt for authorisation.`
       );
     }
-    let itemId = null;
-    try {
-      itemId = JSON.parse(created.out).id;
-    } catch {
-    }
     if (dryRun) {
-      process.stdout.write(
+      process2.stdout.write(
         green("\n  ok  ") + "DRY RUN succeeded - op accepted the item and wrote NOTHING.\n      Re-run without --dry-run to create it for real.\n"
       );
       return;
     }
-    process.stdout.write(
+    process2.stdout.write(
       green("\n  ok  ") + `item created in vault ${vault}
       title: ${title}
-` + (itemId ? `      id:    ${itemId}
-` : "")
+`
     );
-    process.stdout.write(
+    process2.stdout.write(
       "\n" + bold("NOW FINISH THE JOB:") + `
   1. Move the three SLIP-39 shares to three SEPARATE physical places.
   2. Write the 24 words on paper and verify with \`npm run verify\`.
   3. Delete this item - it is a staging buffer, not storage:
 
-       op item delete ${itemId ?? `"${title}"`} --vault ${vault}
+       op item delete "${title}" --vault ${vault}
 
 ` + dim("  Until you do, your entire wallet sits in one 1Password item and\n  is synced to their servers.\n")
     );
@@ -9039,36 +9740,36 @@ never an environment variable, never a file on disk.
 async function split2({ shareSpec, groupThreshold, scheme, count }) {
   assertRuntime();
   selfTest({ quiet: true });
-  process.stdout.write("\nSelf-test OK.\n");
+  process2.stdout.write("\nSelf-test OK.\n");
   const groups = parseGroupSpec(shareSpec);
-  assert3.ok(
+  assert4.ok(
     groupThreshold >= 1 && groupThreshold <= groups.length,
     `--group-threshold must be between 1 and ${groups.length}`
   );
-  process.stdout.write(
+  process2.stdout.write(
     "\nType the recovery phrase you want to back up, FROM YOUR PAPER.\nInput is hidden. Abbreviations of 3+ letters are expanded.\n\n"
   );
   const raw = await readInput("phrase: ");
   const { words, notes, problems } = repairWords(raw);
-  for (const note of notes) process.stdout.write(`${note}
+  for (const note of notes) process2.stdout.write(`${note}
 `);
   if (problems.length > 0) {
-    for (const p of problems) process.stdout.write(`${p}
+    for (const p of problems) process2.stdout.write(`${p}
 `);
     throw new Error(`${problems.length} word(s) are not valid BIP-39 words`);
   }
   const phrase = words.join(" ");
-  assert3.equal(
+  assert4.equal(
     validateMnemonic(phrase, wordlist),
     true,
     "CHECKSUM FAILED - a word is wrong or out of order. Nothing was split."
   );
   const entropy = Buffer.from(mnemonicToEntropy(phrase, wordlist));
-  process.stdout.write(
+  process2.stdout.write(
     `  ok  ${words.length} words, checksum correct, ${entropy.length * 8}-bit entropy
 `
   );
-  process.stdout.write(
+  process2.stdout.write(
     "\nWhich wallet is this? Enter the BIP-39 passphrase you use with this\nphrase, so the fingerprint below matches what `npm run verify` showed.\nIt is NOT stored in the shares.\n"
   );
   const idPassphrase = await readPassphraseTwice();
@@ -9082,7 +9783,7 @@ async function split2({ shareSpec, groupThreshold, scheme, count }) {
     accounts: idBundle.accounts,
     fingerprint: idBundle.fingerprint
   });
-  process.stdout.write(
+  process2.stdout.write(
     `
 YOU ARE ABOUT TO SPLIT THIS WALLET
   master fingerprint: ${idBundle.fingerprint}
@@ -9097,7 +9798,7 @@ YOU ARE ABOUT TO SPLIT THIS WALLET
   idBundle.dispose();
   for (const a of idBundle.accounts) a.privateKey.fill(0);
   idSeed.fill(0);
-  process.stdout.write(
+  process2.stdout.write(
     "\nNOTE ON PASSPHRASES\n  SLIP-39 shares carry the ENTROPY only. A BIP-39 passphrase (the 25th\n  word) is NOT included and cannot be recovered from them. If this\n  wallet uses one, these shares alone restore nothing - store the\n  passphrase separately, and remember that losing it loses the funds.\n  This tool deliberately does not offer SLIP-39's own passphrase: two\n  different passphrase concepts in one backup is a way to lose money.\n"
   );
   const rng = makeShamirRng();
@@ -9114,16 +9815,16 @@ YOU ARE ABOUT TO SPLIT THIS WALLET
     });
     const EXHAUSTIVE_LIMIT = 5e3;
     const SAMPLE_SIZE = 500;
-    const total = countAdmissibleSubsets(groupThreshold, groups);
-    const check = (subset) => assert3.ok(
+    const total = countAdmissibleSubsetsExact(groupThreshold, groups);
+    const check = (subset) => assert4.ok(
       equalBytes(combineShares(subset, ""), entropy),
       "ROUND-TRIP FAILED: a valid subset of shares does not restore the entropy"
     );
-    if (total <= EXHAUSTIVE_LIMIT) {
+    if (total <= BigInt(EXHAUSTIVE_LIMIT)) {
       for (const subset of admissibleSubsets(groupThreshold, groups, shares)) {
         check(subset);
       }
-      process.stdout.write(
+      process2.stdout.write(
         `
   ok  all ${total} admissible share combinations verified to restore this exact wallet
 `
@@ -9132,16 +9833,21 @@ YOU ARE ABOUT TO SPLIT THIS WALLET
       check(
         groups.slice(0, groupThreshold).flatMap((g, gi) => shares[gi].slice(0, g.threshold))
       );
-      for (let i = 0; i < SAMPLE_SIZE; i += 1) {
-        check(randomAdmissibleSubset(groupThreshold, groups, shares, rng));
+      const sampledRanks = /* @__PURE__ */ new Set(["0"]);
+      while (sampledRanks.size <= SAMPLE_SIZE) {
+        const rank = randomAdmissibleRank(total, rng);
+        const key = rank.toString();
+        if (sampledRanks.has(key)) continue;
+        sampledRanks.add(key);
+        check(admissibleSubsetAtRank(groupThreshold, groups, shares, rank));
       }
-      process.stdout.write(
+      process2.stdout.write(
         `
-  ok  ${SAMPLE_SIZE + 1} of ${total.toLocaleString("en-US")} admissible combinations verified (1 canonical + ` + SAMPLE_SIZE + " random).\n  !   Exhaustive checking was SKIPPED: this layout has too many\n  !   combinations to enumerate. Every subset tested passed, but not\n  !   every subset was tested. A simpler layout such as 2of3 or 3of5\n  !   is verified exhaustively.\n"
+  ok  ${SAMPLE_SIZE + 1} of ${total.toLocaleString("en-US")} admissible combinations verified (1 canonical + ` + SAMPLE_SIZE + " unique random ranks).\n  !   Exhaustive checking was SKIPPED: this layout has too many\n  !   combinations to enumerate. Every subset tested passed, but not\n  !   every subset was tested. A simpler layout such as 2of3 or 3of5\n  !   is verified exhaustively.\n"
       );
     }
     printShares(shares, groups, groupThreshold);
-    process.stdout.write(
+    process2.stdout.write(
       `
 NEXT STEP - before you rely on these, test recovery:
     npm run combine
@@ -9157,17 +9863,17 @@ same index 1 address as \`npm run verify\`.
 async function combine({ scheme, count, showPrivate, showPublic, qr }) {
   assertRuntime();
   selfTest({ quiet: true });
-  process.stdout.write("\nSelf-test OK.\n");
+  process2.stdout.write("\nSelf-test OK.\n");
   const mnemonics = await readShares();
   const entropy = combineShares(mnemonics, "");
-  process.stdout.write(
+  process2.stdout.write(
     `
   ok  ${mnemonics.length} shares combined into ${entropy.length * 8} bits
 `
   );
   const phrase = entropyToMnemonic(entropy, wordlist);
-  assert3.equal(validateMnemonic(phrase, wordlist), true);
-  assert3.ok(
+  assert4.equal(validateMnemonic(phrase, wordlist), true);
+  assert4.ok(
     equalBytes(mnemonicToEntropy(phrase, wordlist), entropy),
     "ROUND-TRIP FAILED: recovered entropy does not survive BIP-39 encoding"
   );
@@ -9175,18 +9881,18 @@ async function combine({ scheme, count, showPrivate, showPublic, qr }) {
   const seed = mnemonicToSeedSync(phrase, passphrase);
   const { accounts, fingerprint, dispose } = primaryAccounts(seed, scheme, count);
   crossCheck({ entropy, phrase, passphrase, seed, accounts, fingerprint });
-  process.stdout.write("  ok  cross-check: independent implementation agrees\n");
+  process2.stdout.write("  ok  cross-check: independent implementation agrees\n");
   printPhrase(phrase);
-  process.stdout.write(
+  process2.stdout.write(
     `
   BIP-39 passphrase:  ${passphrase ? "SET (not shown)" : "empty"}
 `
   );
-  process.stdout.write(`  derivation scheme:  ${scheme} - ${templateFor(scheme)}
+  process2.stdout.write(`  derivation scheme:  ${scheme} - ${templateFor(scheme)}
 `);
-  process.stdout.write(`  master fingerprint: ${fingerprint}
+  process2.stdout.write(`  master fingerprint: ${fingerprint}
 `);
-  process.stdout.write(
+  process2.stdout.write(
     `  note: the fingerprint and the index 0 address are identical under both
         schemes. Only index 1 and above tell them apart, so if you split
         an --scheme=account wallet, recombine with that same scheme.
@@ -9195,7 +9901,7 @@ async function combine({ scheme, count, showPrivate, showPublic, qr }) {
   );
   printAccounts(accounts, { showPrivate, showPublic });
   if (qr) printAddressQRs(accounts);
-  process.stdout.write(
+  process2.stdout.write(
     "These shares were assumed to come from `npm run split`, which uses no\nSLIP-39 passphrase. A share set produced elsewhere WITH one decrypts to\ndifferent bytes and still yields a valid-looking phrase for a wallet that\nis not yours - the SLIP-39 digest cannot detect it. Your safety net is\nthe fingerprint above: if it does not match what you recorded, stop.\n"
   );
   dispose();
@@ -9230,7 +9936,7 @@ HEATDEATH - offline BIP-39 / EVM seed generator. Hardened build.
   node generate.mjs --split    [options]   split a phrase into SLIP-39 shares
   node generate.mjs --combine  [options]   restore a phrase from SLIP-39 shares
   node generate.mjs --op-export            generate or stage a wallet into 1Password
-  node generate.mjs --prove-sandbox        show the runtime denying net/exec/write
+  node generate.mjs --prove-guard          show the trusted-code capability guard
   node generate.mjs --license              licence and third-party notices
 
 Options
@@ -9255,7 +9961,7 @@ Options
 SLIP-39 shares - into ONE 1Password item, as a staging buffer for the moment
 of creation. Three shares in one vault are not a threshold backup; delete the
 item once the contents are where they belong. It needs --allow-child-process
-to run the op CLI, so it runs at 5/6 instead of 6/6, which is why it is a
+to run the op CLI, so its capability scope is 5/6 instead of 6/6, which is why it is a
 separate command. The secret reaches op only through the child's stdin -
 never argv, never an environment variable, never a file.
 
@@ -9270,115 +9976,50 @@ Secrets are read interactively with echo disabled and are never accepted as
 command-line arguments: argv is visible to every process via \`ps\` and is
 recorded in shell history.
 `;
-var KNOWN_FLAGS = [
-  "--self-test",
-  "--wizard",
-  "--generate",
-  "--verify",
-  "--split",
-  "--combine",
-  "--op-export",
-  "--dry-run",
-  "--prove-sandbox",
-  "--license",
-  "--dice",
-  "--show-public",
-  "--show-private",
-  "--wipe-screen",
-  "--qr",
-  "--help"
-];
-function parseArgs(argv) {
-  const flags = /* @__PURE__ */ new Set();
-  const opts = /* @__PURE__ */ new Map();
-  for (const arg of argv) {
-    const eq = arg.indexOf("=");
-    if (eq === -1) flags.add(arg);
-    else opts.set(arg.slice(0, eq), arg.slice(eq + 1));
-  }
-  for (const flag of flags) {
-    assert3.ok(KNOWN_FLAGS.includes(flag), `Unknown flag "${flag}"`);
-  }
-  for (const key of opts.keys()) {
-    assert3.ok(
-      ["--scheme", "--accounts", "--shares", "--group-threshold"].includes(key),
-      `Unknown option "${key}"`
-    );
-  }
-  const scheme = opts.get("--scheme") ?? DEFAULT_SCHEME;
-  assert3.ok(
-    Object.hasOwn(PATH_SCHEMES, scheme),
-    `Unknown --scheme "${scheme}". Available: ${Object.keys(PATH_SCHEMES).join(", ")}`
-  );
-  const count = Number.parseInt(opts.get("--accounts") ?? String(DEFAULT_ACCOUNTS), 10);
-  assert3.ok(
-    Number.isInteger(count) && count >= 1 && count <= MAX_ACCOUNTS,
-    `--accounts must be an integer between 1 and ${MAX_ACCOUNTS}`
-  );
-  const groupThreshold = Number.parseInt(opts.get("--group-threshold") ?? "1", 10);
-  assert3.ok(
-    Number.isInteger(groupThreshold) && groupThreshold >= 1,
-    "--group-threshold must be a positive integer"
-  );
-  return {
-    flags,
-    scheme,
-    count,
-    shareSpec: opts.get("--shares") ?? "2of3",
-    groupThreshold,
-    showPrivate: flags.has("--show-private"),
-    showPublic: flags.has("--show-public"),
-    useDice: flags.has("--dice"),
-    wipe: flags.has("--wipe-screen"),
-    dryRun: flags.has("--dry-run"),
-    qr: flags.has("--qr")
-  };
-}
+var parseArgs = (argv) => parseCli(argv, {
+  defaultScheme: DEFAULT_SCHEME,
+  schemes: Object.keys(PATH_SCHEMES),
+  defaultAccounts: DEFAULT_ACCOUNTS,
+  maxAccounts: MAX_ACCOUNTS
+});
 try {
-  const cli = parseArgs(process.argv.slice(2));
-  if (cli.flags.has("--self-test")) {
+  const cli = parseArgs(process2.argv.slice(2));
+  if (cli.command === "self-test") {
     assertRuntime({ requireTty: false });
     selfTest();
-  } else if (cli.flags.has("--wizard")) {
+  } else if (cli.command === "wizard") {
     await wizard(cli);
-  } else if (cli.flags.has("--generate")) {
+  } else if (cli.command === "generate") {
     await generate(cli);
-  } else if (cli.flags.has("--verify")) {
+  } else if (cli.command === "verify") {
     await verify(cli);
-  } else if (cli.flags.has("--split")) {
+  } else if (cli.command === "split") {
     await split2(cli);
-  } else if (cli.flags.has("--combine")) {
+  } else if (cli.command === "combine") {
     await combine(cli);
-  } else if (cli.flags.has("--op-export")) {
+  } else if (cli.command === "op-export") {
     await exportToOnePassword(cli);
-  } else if (cli.flags.has("--license")) {
-    process.stdout.write(LICENCE_NOTICE);
-  } else if (cli.flags.has("--prove-sandbox")) {
+  } else if (cli.command === "license") {
+    process2.stdout.write(LICENCE_NOTICE);
+  } else if (cli.command === "prove-guard") {
     await proveSandbox();
   } else {
-    process.stdout.write(USAGE);
-    process.exitCode = cli.flags.has("--help") ? 0 : 2;
+    process2.stdout.write(USAGE);
+    process2.exitCode = 0;
   }
 } catch (error) {
-  process.stderr.write(`
+  process2.stderr.write(`
 ERROR: ${error.message}
 `);
-  process.exitCode = 1;
+  process2.exitCode = 1;
 }
 /*! Bundled license information:
 
 @noble/curves/utils.js:
-  (*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) *)
-
 @noble/curves/abstract/modular.js:
-  (*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) *)
-
 @noble/curves/abstract/curve.js:
-  (*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) *)
-
+@noble/curves/abstract/der.js:
 @noble/curves/abstract/weierstrass.js:
-  (*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) *)
-
 @noble/curves/secp256k1.js:
   (*! noble-curves - MIT License (c) 2022 Paul Miller (paulmillr.com) *)
 

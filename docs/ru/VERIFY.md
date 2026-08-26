@@ -12,7 +12,7 @@
 - [Порядок доверия](#порядок-доверия)
 - [Проверка релиза](#проверка-релиза)
 - [Воспроизведение сборки](#воспроизведение-сборки)
-- [Почему `--prove-sandbox` внутри бинарника ничего не доказывает](#почему---prove-sandbox-внутри-бинарника-ничего-не-доказывает)
+- [Почему `--prove-guard` внутри бинарника ничего не доказывает](#почему---prove-guard-внутри-бинарника-ничего-не-доказывает)
 - [Проверка самого кошелька](#проверка-самого-кошелька)
 - [Сверка чужим кодом](#сверка-чужим-кодом)
 - [macOS: молчаливая смерть бинарника](#macos-молчаливая-смерть-бинарника)
@@ -35,64 +35,52 @@
 
 ## Проверка релиза
 
+Обычные команды в checkout исходников исполняют этот checkout через
+`build/run-source.mjs` и предупреждают, что релизные подписи его не покрывают.
+Для строгой границы подписи скачайте полный набор артефактов в `dist/` и используйте
+явные команды `:verified`.
+
 ```sh
-( cd dist && shasum -a 256 -c SHA256SUMS --ignore-missing )
-npm run verify-release
+npm run verify-release -- --trusted-keys=/absolute/independent/key-directory
+# добавьте --require-all, если скачан также SEA для darwin/arm64
 ```
 
-Ожидаемо **после скачивания релиза целиком**:
+Проверяющий сначала валидирует все три подписи, затем разбирает `SHA256SUMS`
+строгой грамматикой. Абсолютные пути, `..`, неожиданные имена, дубликаты и
+некорректные хеши приводят к отказу. Bundle, детерминированный архив исходников,
+provenance и рецепт сборки обязательны; большой SEA опционален, если не указан
+`--require-all`.
+
+Ожидаемый результат:
 
 ```
-==> file hashes against dist/SHA256SUMS
+==> signatures
+  ok    ed25519 …fingerprint…
+  ok    ml-dsa-87 …fingerprint…
+  ok    slh-dsa-sha2-128s …fingerprint…
+
+==> artifact hashes
   ok    heatdeath.mjs
-  ok    heatdeath
-
-==> manifest signatures
-  ok    ed25519
-  ok    ml-dsa-87
-  ok    slh-dsa-sha2-128s
+  ok    heatdeath-v2.1.0-source.tar.gz
+  ok    heatdeath-v2.1.0.spdx.json
+  ok    SOURCE-PROVENANCE.json
+  ok    BUILD-RECIPE.txt
+  --    heatdeath SEA absent (optional)
 ```
-
-Ожидаемо **в свежем клоне репозитория**, где бинарника на 144 МБ нет — он
-прикладывается к релизу, а не коммитится:
-
-```
-==> file hashes against dist/SHA256SUMS
-  ok    heatdeath.mjs
-  --    heatdeath not present - not checked
-
-1 artifact(s) verified, 1 not present.
-```
-
-Это не отказ, и код возврата остаётся `0`. Отсутствующий артефакт и артефакт
-с **несовпавшим** хешем — принципиально разные события: первое ожидаемо, второе
-означает, что байты изменились. Поэтому они и выводятся по-разному.
-
-Два случая, в которых проверка всё же падает с кодом `1`:
-
-| Ситуация | Вывод |
-|---|---|
-| Хеш не совпал | `FAIL heatdeath.mjs - expected …, got …` |
-| Не найдено **ни одного** артефакта из манифеста | `NOTHING WAS VERIFIED` |
-
-Второй случай существует затем, чтобы прогон, не проверивший ничего, не мог
-отчитаться об успехе. Флаг `--ignore-missing` у `shasum` такой защиты не имеет:
-на пустом `dist/` он вернёт `0`. Поэтому читайте строку `heatdeath.mjs: OK`,
-а не только код возврата.
 
 ### Что это доказывает и чего не доказывает
 
 Зелёный результат означает: файлы соответствуют манифесту, а манифест подписан
-владельцем ключей из `dist/*.pub.pem`.
+тем, кто владеет независимо предоставленными ключами.
 
 **Если публичные ключи пришли той же загрузкой, что и артефакт, — это
 замкнутый круг.** Атакующий, подменивший бинарник, подписал бы его своими
 ключами и приложил бы их же.
 
 Подпись начинает что-то значить только после того, как вы сверили **отпечатки
-ключей с источником, отличным от самой загрузки**. `npm run verify-release`
-печатает отпечатки именно для этого. Сверить их — ваша работа, и никакой
-скрипт её не сделает.
+ключей с источником, отличным от самой загрузки**. Параметр `--trusted-keys`
+делает эту границу доверия явной. Без него проверяющий предупреждает о
+циклическом доверии.
 
 ---
 
@@ -102,16 +90,16 @@ npm run verify-release
 и сравните».
 
 ```sh
-rm -rf node_modules && npm ci --ignore-scripts
-./build/build.sh
-( cd dist && shasum -a 256 -c SHA256SUMS )
+npm ci --ignore-scripts
+npm run build
+# полная tagged-сборка darwin/arm64: npm run build:release
 ```
 
 Подробности и точные версии — `dist/BUILD-RECIPE.txt`.
 
 - **Бандл `.mjs` воспроизводим на любой машине** с той же версией esbuild.
   В нём нет ни абсолютных путей, ни временных меток.
-- **Бинарник воспроизводим только против той же сборки Node** (v26.5.0,
+- **Бинарник воспроизводим только против той же сборки Node** (v26.7.0,
   darwin/arm64), потому что содержит рантайм целиком.
 
 Две тонкости, установленные измерением:
@@ -127,11 +115,11 @@ rm -rf node_modules && npm ci --ignore-scripts
 
 ---
 
-## Почему `--prove-sandbox` внутри бинарника ничего не доказывает
+## Почему `--prove-guard` внутри бинарника ничего не доказывает
 
 ```sh
-npm run prove-sandbox     # из исходника — этому можно верить
-./dist/heatdeath --prove-sandbox   # из бинарника — само по себе не доказательство
+npm run prove-guard:verified      # подписанный bundle; только capability scope
+./dist/heatdeath --prove-guard    # из бинарника — само по себе не доказательство
 ```
 
 Бинарник содержит исходник **открытым текстом**: `strings` достаёт его дословно,
@@ -230,7 +218,7 @@ xattr -d com.apple.quarantine ./heatdeath
 - [FIPS 205 — SLH-DSA (SPHINCS+), подпись только на хеш-функциях](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.205.pdf)
 - [FIPS 180-4 — семейство SHA-2, включая SHA-256 из манифеста](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf)
 - [Reproducible Builds — что именно означает «воспроизводимая сборка»](https://reproducible-builds.org/docs/definition/)
-- [Node.js Permission Model — то, что демонстрирует `--prove-sandbox`](https://nodejs.org/api/permissions.html)
+- [Node.js Permission Model — то, что демонстрирует `--prove-guard`](https://nodejs.org/api/permissions.html)
 - [Apple Gatekeeper — причина молчаливой смерти неподписанного бинарника](https://support.apple.com/guide/security/gatekeeper-and-runtime-protection-sec5599b66df/web)
 - [ISO/IEC 18004 — стандарт QR-кода, по которому проверен встроенный кодер](https://www.iso.org/standard/62021.html)
 - [python-qrcode — внешний оракул, которым сверялась матрица QR](https://github.com/lincolnloop/python-qrcode)

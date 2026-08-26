@@ -1,111 +1,131 @@
 #!/usr/bin/env node
-//
-// Verify a downloaded release: file hashes against the manifest, and the
-// manifest against three independent signatures.
-//
-// READ THIS BEFORE TRUSTING THE OUTPUT
-// ------------------------------------
-// A green result here means "these files match this manifest, and this
-// manifest was signed by whoever holds the keys in dist/*.pub.pem". If the
-// public keys arrived in the same download as the artifact, that is circular:
-// an attacker who replaced the binary would simply have signed it with their
-// own keys and shipped those too.
-//
-// The signature is only worth something once you have pinned the public key
-// fingerprints from a DIFFERENT source than the download. This script prints
-// those fingerprints so you can compare them; comparing them is your job and
-// nothing here can do it for you.
-//
-import { createHash, verify } from "node:crypto";
+// Verify release signatures, a strictly parsed manifest, required artifacts,
+// and the source-provenance record. Public keys should be supplied separately.
+
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import {
+  parseReleaseManifest,
+  PINNED_RELEASE_FINGERPRINTS,
+  requireRealFile,
+  validateSpdxSbom,
+  verifyArtifactHashes,
+  verifyManifestSignatures,
+} from "./release-lib.mjs";
+import { readReleaseConfig } from "./release-config.mjs";
+
+process.on("uncaughtException", (error) => {
+  process.stderr.write(`release verification refused: ${error.message}\n`);
+  process.exitCode = 1;
+});
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const DIST = path.join(ROOT, "dist");
+const config = readReleaseConfig(ROOT);
 const SCHEMES = ["ed25519", "ml-dsa-87", "slh-dsa-sha2-128s"];
-
-const read = (p) => fs.readFileSync(path.join(DIST, p));
-let failures = 0;
-let verified = 0;
-let absent = 0;
-const fail = (m) => { failures += 1; process.stdout.write(`  FAIL  ${m}\n`); };
-const ok = (m) => process.stdout.write(`  ok    ${m}\n`);
-const skip = (m) => { absent += 1; process.stdout.write(`  --    ${m}\n`); };
-
-process.stdout.write("\n==> file hashes against dist/SHA256SUMS\n");
-const manifest = read("SHA256SUMS");
-for (const line of manifest.toString("utf8").split("\n").filter(Boolean)) {
-  const [expected, name] = line.trim().split(/\s+/);
-  const file = path.join(DIST, name);
-  // An ABSENT artifact and a MISMATCHED one are different events and must not
-  // be reported the same way. The single executable is deliberately not
-  // committed - it is attached to the release - so a git clone legitimately
-  // has only the bundle. Calling that a FAILURE told honest users to distrust
-  // a correct checkout, which is how people learn to ignore this output.
-  // A mismatch stays fatal: that is the case where bytes changed under you.
-  if (!fs.existsSync(file)) {
-    skip(`${name} not present - not checked`);
-    continue;
-  }
-  const actual = createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-  if (actual === expected) { verified += 1; ok(`${name}`); }
-  else fail(`${name} - expected ${expected}, got ${actual}`);
-}
-
-process.stdout.write("\n==> manifest signatures\n");
-for (const id of SCHEMES) {
-  try {
-    const publicKey = read(`${id}.pub.pem`);
-    const signature = read(`SHA256SUMS.${id}.sig`);
-    if (verify(null, manifest, publicKey, signature)) ok(`${id}`);
-    else fail(`${id} - SIGNATURE DOES NOT VERIFY`);
-  } catch (error) {
-    fail(`${id} - ${error.code ?? error.message}`);
+const argv = process.argv.slice(2);
+const requireAll = argv.includes("--require-all");
+const trustedArg = argv.find((arg) => arg.startsWith("--trusted-keys="));
+const distArg = argv.find((arg) => arg.startsWith("--dist="));
+for (const arg of argv) {
+  if (arg !== "--require-all" && !arg.startsWith("--trusted-keys=") &&
+      !arg.startsWith("--dist=")) {
+    throw new Error(`unknown option ${arg}`);
   }
 }
-
-process.stdout.write("\n==> public key fingerprints (SHA-256 of the DER SPKI)\n");
-process.stdout.write("    Compare these against a source OTHER than this download.\n");
-for (const id of SCHEMES) {
-  try {
-    const pem = read(`${id}.pub.pem`).toString("utf8");
-    const der = Buffer.from(pem.replace(/-----[^-]+-----|\s/g, ""), "base64");
-    const fp = createHash("sha256").update(der).digest("hex");
-    process.stdout.write(`    ${id.padEnd(20)} ${fp}\n`);
-  } catch {
-    process.stdout.write(`    ${id.padEnd(20)} (public key not present)\n`);
+let DIST = path.join(ROOT, "dist");
+if (distArg) {
+  DIST = distArg.slice("--dist=".length);
+  if (!path.isAbsolute(DIST)) throw new Error("--dist must be absolute");
+  const stat = fs.lstatSync(DIST);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error("artifact directory must be a real directory");
   }
 }
-
-const trailer =
-  "Remember: this proves integrity against THESE keys, not that the keys\n" +
-  "are the ones you meant to trust.\n";
-
-if (failures > 0) {
-  process.stdout.write(
-    `\n${failures} check(s) FAILED. Do not run these artifacts. Build from\n` +
-      "source instead - see dist/BUILD-RECIPE.txt.\n",
-  );
-  process.exitCode = 1;
-} else if (verified === 0) {
-  // Absence is tolerated one artifact at a time, never all of them: a run that
-  // checked nothing must not be able to report success.
-  process.stdout.write(
-    "\nNOTHING WAS VERIFIED. No artifact named in the manifest is present, so\n" +
-      "the signatures above attest to a manifest describing files you do not\n" +
-      "have. Build from source - see dist/BUILD-RECIPE.txt.\n",
-  );
-  process.exitCode = 1;
-} else if (absent > 0) {
-  process.stdout.write(
-    `\n${verified} artifact(s) verified, ${absent} not present.\n\n` +
-      "That is expected in a git clone: the single executable is ~144 MB and is\n" +
-      "attached to the release rather than committed. Everything that IS here\n" +
-      "matches the manifest, and the manifest carries valid signatures. To check\n" +
-      "the executable too, download it into dist/ and run this again.\n\n" +
-      trailer,
-  );
+let keyDir = DIST;
+if (trustedArg) {
+  keyDir = trustedArg.slice("--trusted-keys=".length);
+  if (!path.isAbsolute(keyDir)) throw new Error("--trusted-keys must be absolute");
+  const stat = fs.lstatSync(keyDir);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error("trusted key directory must be a real directory");
+  }
 } else {
-  process.stdout.write(`\nAll checks passed. ${trailer}`);
+  process.stdout.write(
+    "NOTICE: public-key files come from the artifact directory; their fingerprints\n" +
+      "must match identities pinned in this verifier. For an independent trust\n" +
+      "channel, prefer --trusted-keys=/absolute/external/directory.\n\n",
+  );
+}
+
+requireRealFile(path.join(DIST, "SHA256SUMS"), "manifest");
+const manifest = fs.readFileSync(path.join(DIST, "SHA256SUMS"));
+const entries = parseReleaseManifest(manifest.toString("utf8"), {
+  allowed: config.allowedArtifacts, required: config.requiredArtifacts, requireAll,
+});
+
+let failures = 0;
+const fail = (message) => { failures += 1; process.stdout.write(`  FAIL  ${message}\n`); };
+const ok = (message) => process.stdout.write(`  ok    ${message}\n`);
+
+process.stdout.write("==> signatures\n");
+for (const result of verifyManifestSignatures({
+  manifest, schemes: SCHEMES, keyDirectory: keyDir,
+  signatureDirectory: DIST, fingerprints: PINNED_RELEASE_FINGERPRINTS,
+})) {
+  if (result.ok) ok(`${result.scheme} ${result.fingerprint}`);
+  else fail(`${result.scheme}: ${result.error}`);
+}
+
+process.stdout.write("\n==> artifact hashes\n");
+const optional = requireAll ? new Set() : new Set(["heatdeath"]);
+for (const result of verifyArtifactHashes({ directory: DIST, entries, optional })) {
+  if (result.absent) process.stdout.write("  --    heatdeath SEA absent (optional)\n");
+  else if (result.ok) ok(result.name);
+  else fail(`${result.name}: ${result.error}`);
+}
+
+try {
+  const sbom = JSON.parse(fs.readFileSync(path.join(DIST, config.sbom), "utf8"));
+  const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  const packageLock = JSON.parse(fs.readFileSync(path.join(ROOT, "package-lock.json"), "utf8"));
+  validateSpdxSbom(sbom, { packageJson, packageLock });
+  if (sbom.documentNamespace !==
+      `https://github.com/ilyamk/heatdeath/releases/tag/${config.tag}#spdx-${
+        JSON.parse(fs.readFileSync(path.join(DIST, "SOURCE-PROVENANCE.json"), "utf8")).commit
+      }` || sbom.creationInfo?.creators?.length !== 1 ||
+      sbom.creationInfo.creators[0] !== `Tool: npm/cli-${config.npmVersion}`) {
+    throw new Error("SBOM canonical provenance fields are inconsistent");
+  }
+  ok(`${config.sbom} SPDX semantics`);
+} catch (error) { fail(`SBOM: ${error.message}`); }
+
+try {
+  const provenance = JSON.parse(fs.readFileSync(
+    path.join(DIST, "SOURCE-PROVENANCE.json"), "utf8",
+  ));
+  if (provenance.schemaVersion !== 1 ||
+      provenance.version !== config.version || provenance.tag !== config.tag ||
+      !/^[0-9a-f]{40}$/.test(provenance.commit) ||
+      provenance.sourceArchive?.name !== config.sourceArchive ||
+      provenance.sourceArchive?.sha256 !== entries.get(config.sourceArchive) ||
+      provenance.sbom?.name !== config.sbom ||
+      provenance.sbom?.sha256 !== entries.get(config.sbom) ||
+      !/^[0-9a-f]{64}$/.test(provenance.packageLockSha256) ||
+      provenance.node?.version !== config.nodeVersion ||
+      !/^[0-9a-f]{64}$/.test(provenance.node?.binarySha256) ||
+      provenance.npm !== config.npmVersion || provenance.esbuild !== config.esbuild ||
+      provenance.platform !== "darwin" ||
+      provenance.arch !== "arm64") {
+    throw new Error("release metadata is incomplete or inconsistent");
+  }
+  ok("SOURCE-PROVENANCE.json semantics");
+} catch (error) { fail(`provenance: ${error.message}`); }
+
+if (failures) {
+  process.stderr.write(`\n${failures} release verification check(s) failed. DO NOT RUN.\n`);
+  process.exitCode = 1;
+} else {
+  process.stdout.write("\nAll required artifacts and signatures verified.\n");
 }

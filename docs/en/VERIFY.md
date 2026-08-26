@@ -12,7 +12,7 @@
 - [The order of trust](#the-order-of-trust)
 - [Verifying a release](#verifying-a-release)
 - [Reproducing the build](#reproducing-the-build)
-- [Why `--prove-sandbox` proves nothing inside a binary](#why---prove-sandbox-proves-nothing-inside-a-binary)
+- [Why `--prove-guard` proves nothing inside a binary](#why---prove-guard-proves-nothing-inside-a-binary)
 - [Verifying the wallet itself](#verifying-the-wallet-itself)
 - [Cross-checking with someone else's code](#cross-checking-with-someone-elses-code)
 - [macOS: the binary dies silently](#macos-the-binary-dies-silently)
@@ -35,64 +35,53 @@ The further down this list you go, the more you are trusting somebody else.
 
 ## Verifying a release
 
+Normal commands in a source checkout execute that checkout through
+`build/run-source.mjs` and print an unsigned-source warning. They do not pretend
+that the working tree is covered by a release signature. Download a complete
+release asset set into `dist/` and use the explicit `:verified` commands when the
+signature boundary is required.
+
 ```sh
-( cd dist && shasum -a 256 -c SHA256SUMS --ignore-missing )
-npm run verify-release
+npm run verify-release -- --trusted-keys=/absolute/independent/key-directory
+# add --require-all when the darwin/arm64 SEA was downloaded too
 ```
 
-Expected **after downloading the complete release**:
+The verifier first checks all three signatures, then parses `SHA256SUMS` with a
+strict grammar. Absolute paths, `..`, unexpected names, duplicate entries and
+malformed hashes are fatal. The bundle, deterministic source archive, provenance
+record and build recipe are mandatory; only the large SEA is optional unless
+`--require-all` is set.
+
+Expected:
 
 ```
-==> file hashes against dist/SHA256SUMS
+==> signatures
+  ok    ed25519 …fingerprint…
+  ok    ml-dsa-87 …fingerprint…
+  ok    slh-dsa-sha2-128s …fingerprint…
+
+==> artifact hashes
   ok    heatdeath.mjs
-  ok    heatdeath
-
-==> manifest signatures
-  ok    ed25519
-  ok    ml-dsa-87
-  ok    slh-dsa-sha2-128s
+  ok    heatdeath-v2.1.0-source.tar.gz
+  ok    heatdeath-v2.1.0.spdx.json
+  ok    SOURCE-PROVENANCE.json
+  ok    BUILD-RECIPE.txt
+  --    heatdeath SEA absent (optional)
 ```
-
-Expected **in a fresh clone of the repository**, where the 144 MB binary is absent —
-it is attached to the release rather than committed:
-
-```
-==> file hashes against dist/SHA256SUMS
-  ok    heatdeath.mjs
-  --    heatdeath not present - not checked
-
-1 artifact(s) verified, 1 not present.
-```
-
-This is not a failure, and the exit code stays `0`. An **absent** artifact and one
-whose hash **does not match** are fundamentally different events: the first is
-expected, the second means the bytes changed under you. That is why they are
-reported differently.
-
-Two cases in which the check does fail, with exit code `1`:
-
-| Situation | Output |
-|---|---|
-| Hash mismatch | `FAIL heatdeath.mjs - expected …, got …` |
-| **No** artifact from the manifest is present | `NOTHING WAS VERIFIED` |
-
-The second case exists so that a run which verified nothing cannot report success.
-The `shasum --ignore-missing` flag has no such protection: on an empty `dist/` it
-returns `0`. So read the `heatdeath.mjs: OK` line, not merely the exit code.
 
 ### What this proves and what it does not
 
 A green result means: the files match the manifest, and the manifest was signed by
-whoever holds the keys in `dist/*.pub.pem`.
+whoever holds the independently supplied keys.
 
 **If the public keys arrived in the same download as the artifact, that is
 circular.** An attacker who replaced the binary would simply have signed it with
 their own keys and shipped those too.
 
 A signature only starts to mean something once you have compared the **key
-fingerprints against a source other than the download itself**. `npm run
-verify-release` prints those fingerprints for exactly this purpose. Comparing them
-is your job, and no script can do it for you.
+fingerprints against a source other than the download itself**. Supplying that
+directory through `--trusted-keys` makes the trust boundary explicit. Without it,
+the verifier emits a circular-trust warning.
 
 ---
 
@@ -102,16 +91,16 @@ The strongest mechanism available: not "trust the signature" but "build it yours
 and compare".
 
 ```sh
-rm -rf node_modules && npm ci --ignore-scripts
-./build/build.sh
-( cd dist && shasum -a 256 -c SHA256SUMS )
+npm ci --ignore-scripts
+npm run build
+# the full tagged darwin/arm64 release: npm run build:release
 ```
 
 Exact versions and details are in `dist/BUILD-RECIPE.txt`.
 
 - **The `.mjs` bundle reproduces on any machine** with the same esbuild version.
   It contains neither absolute paths nor timestamps.
-- **The binary reproduces only against the same Node build** (v26.5.0,
+- **The binary reproduces only against the same Node build** (v26.7.0,
   darwin/arm64), because it embeds the entire runtime.
 
 Two subtleties, both established by measurement rather than assumption:
@@ -128,15 +117,15 @@ no build at all.
 
 ---
 
-## Why `--prove-sandbox` proves nothing inside a binary
+## Why `--prove-guard` proves nothing inside a binary
 
 ```sh
-npm run prove-sandbox             # from source - this you can believe
-./dist/heatdeath --prove-sandbox  # from the binary - not proof by itself
+npm run prove-guard:verified      # signed bundle, capability scope only
+./dist/heatdeath --prove-guard    # from the binary - not proof by itself
 ```
 
 The binary contains the source **as plain text**: `strings` extracts it verbatim,
-sandbox flags included. A patched build will print the same `6/6 denied` while doing
+guard flags included. A patched build will print the same `6/6 denied` while doing
 whatever it likes. Self-attestation by an artifact the attacker controls is
 circular.
 
@@ -207,7 +196,7 @@ is checked by two external oracles, neither of which is our own code:
 - [FIPS 205 — SLH-DSA (SPHINCS+), signatures resting on hash functions only](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.205.pdf)
 - [FIPS 180-4 — the SHA-2 family, including the SHA-256 used in the manifest](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf)
 - [Reproducible Builds — what "reproducible build" formally means](https://reproducible-builds.org/docs/definition/)
-- [Node.js Permission Model — what `--prove-sandbox` demonstrates](https://nodejs.org/api/permissions.html)
+- [Node.js Permission Model — what `--prove-guard` demonstrates](https://nodejs.org/api/permissions.html)
 - [Apple Gatekeeper — why an unsigned binary dies without a message](https://support.apple.com/guide/security/gatekeeper-and-runtime-protection-sec5599b66df/web)
 - [ISO/IEC 18004 — the QR code standard the built-in encoder was checked against](https://www.iso.org/standard/62021.html)
 - [python-qrcode — the external oracle used to compare the QR matrix](https://github.com/lincolnloop/python-qrcode)

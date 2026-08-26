@@ -1,0 +1,115 @@
+name: Reproducible build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  schedule:
+    - cron: "41 3 * * 2"
+  workflow_dispatch:
+
+concurrency:
+  group: reproducible-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Clean Linux bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      bundle-sha: ${{ steps.hash.outputs.bundle }}
+      archive-sha: ${{ steps.hash.outputs.archive }}
+      tar-sha: ${{ steps.hash.outputs.tar }}
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Use exact release Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version-release
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - run: ./scripts/ci/reproducible-bundle.sh
+      - name: Build deterministic source archive twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/ci/create-source-archive.mjs /tmp/source-a.tar.gz HEAD
+          node scripts/ci/create-source-archive.mjs /tmp/source-b.tar.gz HEAD
+          cmp /tmp/source-a.tar.gz /tmp/source-b.tar.gz
+      - name: Export hashes
+        id: hash
+        shell: bash
+        run: |
+          {
+            echo "bundle=$(shasum -a 256 dist/heatdeath.mjs | awk '{print $1}')"
+            echo "archive=$(shasum -a 256 /tmp/source-a.tar.gz | awk '{print $1}')"
+            echo "tar=$(gzip -dc /tmp/source-a.tar.gz | shasum -a 256 | awk '{print $1}')"
+          } >> "$GITHUB_OUTPUT"
+
+  macos:
+    name: Clean macOS arm64 bundle
+    runs-on: macos-26
+    timeout-minutes: 25
+    outputs:
+      bundle-sha: ${{ steps.hash.outputs.bundle }}
+      archive-sha: ${{ steps.hash.outputs.archive }}
+      tar-sha: ${{ steps.hash.outputs.tar }}
+    steps:
+      - name: Checkout without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Use exact release Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version-release
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts
+      - run: ./scripts/ci/reproducible-bundle.sh
+      - name: Build deterministic source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/ci/create-source-archive.mjs /tmp/source.tar.gz HEAD
+      - name: Export hashes
+        id: hash
+        shell: bash
+        run: |
+          {
+            echo "bundle=$(shasum -a 256 dist/heatdeath.mjs | awk '{print $1}')"
+            echo "archive=$(shasum -a 256 /tmp/source.tar.gz | awk '{print $1}')"
+            echo "tar=$(gzip -dc /tmp/source.tar.gz | shasum -a 256 | awk '{print $1}')"
+          } >> "$GITHUB_OUTPUT"
+
+  compare:
+    name: Cross-runner byte equality
+    needs: [linux, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Compare independent hashes
+        shell: bash
+        env:
+          LINUX_BUNDLE: ${{ needs.linux.outputs.bundle-sha }}
+          MACOS_BUNDLE: ${{ needs.macos.outputs.bundle-sha }}
+          LINUX_ARCHIVE: ${{ needs.linux.outputs.archive-sha }}
+          MACOS_ARCHIVE: ${{ needs.macos.outputs.archive-sha }}
+          LINUX_TAR: ${{ needs.linux.outputs.tar-sha }}
+          MACOS_TAR: ${{ needs.macos.outputs.tar-sha }}
+        run: |
+          set -euo pipefail
+          [[ "$LINUX_BUNDLE" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$LINUX_BUNDLE" == "$MACOS_BUNDLE" ]]
+          [[ "$LINUX_TAR" == "$MACOS_TAR" ]]
+          [[ "$LINUX_ARCHIVE" == "$MACOS_ARCHIVE" ]]
+          echo "bundle $LINUX_BUNDLE and source archive reproduce across clean runners"

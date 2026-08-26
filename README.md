@@ -8,10 +8,13 @@ Every guarantee on this page is a command you can run. None of them is a promise
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![Runtime deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](NOTICE.md)
-[![Sandbox](https://img.shields.io/badge/sandbox-6%2F6%20denied-brightgreen)](#-what-makes-this-different)
+[![Guard](https://img.shields.io/badge/capability%20guard-6%2F6%20denied-brightgreen)](#-what-makes-this-different)
 [![Self-test](https://img.shields.io/badge/self--test-21%20groups-brightgreen)](#-what-makes-this-different)
 [![Build](https://img.shields.io/badge/build-reproducible-brightgreen)](docs/en/VERIFY.md)
 [![Signatures](https://img.shields.io/badge/signed-Ed25519%20%2B%20ML--DSA%20%2B%20SLH--DSA-blueviolet)](#-verify-before-you-trust)
+[![CI](https://github.com/ilyamk/heatdeath/actions/workflows/ci.yml/badge.svg)](https://github.com/ilyamk/heatdeath/actions/workflows/ci.yml)
+[![Security analysis](https://github.com/ilyamk/heatdeath/actions/workflows/security-analysis.yml/badge.svg)](https://github.com/ilyamk/heatdeath/actions/workflows/security-analysis.yml)
+[![Reproducibility](https://github.com/ilyamk/heatdeath/actions/workflows/reproducible-build.yml/badge.svg)](https://github.com/ilyamk/heatdeath/actions/workflows/reproducible-build.yml)
 
 [Quick start](#-quick-start) ·
 [Why this exists](#-the-problem) ·
@@ -70,8 +73,8 @@ Not features. Checks you can run yourself, right now.
 |:--:|:--|:--|
 | 🧪 | **Known-answer vectors gate the output.** BIP-39, EIP-55, BIP-32 and a wordlist SHA-256 run *before any secret exists*. One mismatch and nothing is printed. | `npm run self-test` → 21 groups |
 | ♊ | **Two independent implementations must agree.** BIP-39 encoding, PBKDF2 and BIP-32 CKDpriv are computed twice — via `@scure`, and again on bare `node:crypto`. Disagreement is a refusal. | included in the self-test |
-| 🔒 | **The sandbox is enforced, not promised.** Node's permission model denies network, DNS, subprocesses, workers, disk writes and reads outside the package. | `npm run prove-sandbox` → `6/6 denied` |
-| 🎲 | **Entropy from sources that do not share a failure.** Three OS sources XORed through domain-separated SHA-256, NIST SP 800-90B style health tests, pairwise-distinctness (catches a cloned VM), plus optional dice — the only source independent of the machine. | printed at generation |
+| 🔒 | **Least privilege for trusted code.** Node's Permission Model denies network, DNS, subprocesses, workers and filesystem writes. Source checkouts get repository read access; a verified release bundle gets only `/dev/urandom`. It is a capability guard, not a malicious-code sandbox. | `npm run prove-guard` → `6/6 denied` |
+| 🎲 | **Two required OS entropy paths.** OpenSSL `randomBytes` and a direct `/dev/urandom` read are XORed after domain-separated SHA-256 and catastrophic-output tests. Optional physical dice are the only source independent of the machine. Unequal samples do not prove independence. | printed at generation |
 | 🚫 | **Refuses to run where secrecy is impossible.** SSH session, attached debugger, redirected stdout — hard stop, before a secret exists. | try it |
 | ✍️ | **Catches the mistake that actually loses money.** The wizard blanks the screen and makes you type the phrase back from paper, comparing word by word. | `npm run wizard` |
 | 🧩 | **Threshold backup, verified before it is shown.** SLIP-39 2-of-3, checked against 45 official Trezor vectors and recovered from *every* admissible subset. | `npm run split` |
@@ -95,7 +98,7 @@ Not features. Checks you can run yourself, right now.
 git clone <this-repo> && cd evm-seed-generation-tool
 npm ci --ignore-scripts        # exact lockfile, no install scripts
 npm run self-test              # must end: Self-test OK
-npm run prove-sandbox          # must end: 6/6 capability probes denied
+npm run prove-guard            # must end: 6/6 capability probes denied
 ```
 
 If either line differs, **stop.** That is the check working.
@@ -143,8 +146,10 @@ npm run split -- --shares=2of3
 ```
 
 Three shares in three different physical places. Any two restore the wallet.
-One alone reveals **nothing** — information-theoretically, not merely
-computationally.
+One default share is insufficient to recover the wallet, but SLIP-39's four-byte
+digest leaks up to roughly 32 bits of information. For this tool's 256-bit secret,
+about 224 bits of uncertainty remain — computationally infeasible, but not the
+literal zero-information property of textbook Shamir sharing.
 
 ### 6 · Before you move real money
 
@@ -162,16 +167,15 @@ send it back. **Then** fund it.
 You should not take this page's word for any of it.
 
 ```sh
-( cd dist && shasum -a 256 -c SHA256SUMS --ignore-missing )   # bundle matches the manifest
-npm run verify-release                                        # 3 valid signatures
-./build/build.sh                                              # rebuild, same hash
+npm run build                                                  # rebuild/test from this checkout
+npm run verify-release -- --trusted-keys=/independent/key/dir  # complete downloaded release
+npm run self-test:verified                                     # run only after that release verifies
 ```
 
-> **Why `--ignore-missing`:** the 144 MB binary is *not* in the repository — it is
-> attached to the release. A fresh clone contains only the bundle. So the first
-> command must **print `heatdeath.mjs: OK`** — read that line, do not merely check the
-> exit code: with this flag an empty `dist/` would also exit 0. Once you have
-> downloaded the binary into `dist/`, drop the flag; then both lines must read `OK`.
+The checked-out source and a published release are separate trust domains. Normal
+commands run the checkout and visibly warn that it is not release-signature
+verified. `:verified` commands never fall back: they require the complete signed
+release asset set in `dist/` and refuse stale or partial manifests.
 
 Signed with **Ed25519**, **ML-DSA-87** (FIPS 204, lattices) and
 **SLH-DSA-SHA2-128s** (FIPS 205, hash-based — the most conservative assumption
@@ -223,6 +227,7 @@ other file for file.
 | [docs/en/COMPARISON.md](docs/en/COMPARISON.md) | Measured against every comparable open-source project |
 | [docs/en/VERIFY.md](docs/en/VERIFY.md) | Checking signatures, reproducing the build |
 | [docs/en/BUILD.md](docs/en/BUILD.md) | Building it yourself |
+| [docs/en/RELEASE.md](docs/en/RELEASE.md) | Maintainer release and offline-signing ceremony |
 | [docs/en/GLOSSARY.md](docs/en/GLOSSARY.md) | Every specialist term, with the document that explains it |
 
 🇷🇺 **Русская документация:** [README.ru.md](README.ru.md) ·
@@ -240,10 +245,15 @@ npm run verify           re-derive from a phrase you type
 npm run split            split into SLIP-39 shares
 npm run combine          restore from shares
 npm run op-export        stage everything into 1Password (see the caveats)
-npm run prove-sandbox    watch the runtime deny net / exec / write
+npm run prove-guard      watch the trusted-code guard deny net / exec / write
 npm run build            reproducible build
 npm run verify-release   hashes and all three signatures
+npm run self-test:verified  require and execute a complete signed release
 ```
+
+These normal commands execute the current source checkout and print an unsigned-source
+warning. Use their `:verified` variants only with a complete downloaded release;
+they fail closed rather than trusting the checkout or an incomplete manifest.
 
 Secrets are read with echo disabled and are **never** accepted as command-line
 arguments — argv is visible to every process via `ps` and lands in shell history.

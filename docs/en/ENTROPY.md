@@ -20,7 +20,7 @@
 
 ### Multi-source entropy with health tests
 
-Three OS sources plus optional dice. Each is normalised through SHA-256 with a
+Two required OS paths plus optional dice. Each is normalised through SHA-256 with a
 domain separator and combined with **XOR**.
 
 Why XOR: the result is unpredictable if **at least one** input is unpredictable.
@@ -28,20 +28,19 @@ Adding a source physically cannot weaken the result. Replacing a source would ma
 you hostage to the dice; concatenation with truncation could discard part of the OS
 entropy.
 
-**Being honest about independence.** On this platform `crypto.randomBytes` and
-`webcrypto` both lead into the DRBG inside OpenSSL — that is **one source wearing
-two hats**: a broken DRBG breaks both. `/dev/urandom` is the kernel, a genuinely
-different code path. **Dice are the only source independent of the machine.** Do not
-read three lines in the report as triple redundancy.
+**Being honest about independence.** `crypto.randomBytes` uses OpenSSL and the
+second path reads `/dev/urandom` directly. They are different software paths, not
+proof of independent physical entropy: unequal probes cannot detect a cloned VM or
+an attacker-known generator. **Dice are the only source independent of the machine.**
 
-Health tests in the style of NIST SP 800-90B, on a 4 KiB probe from each source:
+Catastrophic-output tests inspired by SP 800-90B, on a 4 KiB probe from each path:
 
 | Test | Threshold | What it catches |
 |---|---|---|
 | Repetition Count | 5 identical bytes in a row | stuck bits, a zeroed buffer |
 | Adaptive Proportion | a value ≥13 times in a window of 512 | degenerate distribution |
 | Monobit | deviation >5σ | a biased source |
-| Pairwise probe distinctness | any match at all | **a cloned VM, a restored snapshot, a stubbed RNG** |
+| Pairwise probe distinctness | any match at all | **catastrophic duplicate wiring or a stubbed output** |
 
 The last row is the most valuable. Two "independent" sources returning identical
 bytes is never a coincidence.
@@ -52,7 +51,7 @@ Passing is not proof of quality; failing is proof of breakage.
 
 ### Dice (`--dice`)
 
-A minimum of 100 d6 rolls = 258 bits ≥ 256. Input is hidden and only the counter is
+A minimum of 128 d6 rolls = 331 bits ≥ 256. Input is hidden and only the counter is
 echoed. A χ² statistic (df = 5) is computed: at p < 0.001 a warning about a possibly
 biased die is printed — a warning specifically, because thanks to XOR a bad die
 cannot weaken the result.
@@ -134,12 +133,15 @@ here.
 
 ### The three levers that do exist
 
-**1. 256 bits of entropy (24 words).** Against Grover on an **unspent** address this
-is ~2¹²⁸ oracle queries instead of ~2⁶⁴ for MetaMask's 12-word phrase. This is the
-only honest technical argument for 24 words — and it is specifically a post-quantum
-one. The caveat: Grover parallelises poorly (the speed-up falls off as the square
-root of the number of machines), every query carries the full cost of PBKDF2, and
-2⁶⁴ sequential coherent quantum operations are far beyond any published roadmap.
+**1. 256 bits of entropy (24 words).** Two different goals must not be conflated.
+Recovering the *exact original mnemonic* from a 256-bit space takes about 2¹²⁸
+Grover queries. Stealing funds from a known **unspent EVM address** is bounded by
+the 160-bit address: a 256-bit mnemonic space contains about 2⁹⁶ colliding keys, so
+Grover finds any usable collision in about 2⁸⁰ queries. A 12-word wallet, whose
+mnemonic space is only 2¹²⁸, is instead searched as its unique original in about
+2⁶⁴ queries. Thus 24 words improve this particular theft bound from ~2⁶⁴ to ~2⁸⁰,
+not to ~2¹²⁸. After a public key is exposed, Shor dominates and mnemonic length
+does not help.
 
 **2. Public keys are hidden by default.** Printing the public key of an address that
 has never spent voluntarily strips its 160-bit hash barrier. Only addresses are
@@ -223,6 +225,12 @@ an empty wallet.
 
 ### What it does NOT give you
 
+For a newly generated wallet HEATDEATH accepts only printable ASCII (space through
+`~`). This avoids normalization, keyboard-layout and wallet-compatibility traps.
+Verification, splitting, combining and existing-wallet export retain well-formed
+Unicode recovery support, normalize it with NFKD, and require fingerprint/address
+confirmation. This policy does not alter BIP-39 or any existing wallet.
+
 **Entropy.** The seed is already 256 bits, and the strength ceiling is the 128 bits
 imposed by the curve. A passphrase does not raise it.
 
@@ -238,8 +246,11 @@ GPU rig (estimate, x1000): ~190,000 attempts/s
 
 The GPU multiplier is a conservative order-of-magnitude estimate, not a measurement.
 
-How long a passphrase of each strength survives at ~190,000 attempts/s (expected
-time, i.e. half the search space):
+Only a documented random selection process can justify a search-space estimate.
+Software cannot infer entropy or cracking time from the resulting text: repeated,
+patterned and human-chosen strings routinely fool character-class estimators.
+The following figures are examples for independently uniform sampling, not scores
+the program assigns to entered text:
 
 | Passphrase | Bits | Survives |
 |---|---|---|

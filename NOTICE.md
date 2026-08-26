@@ -174,15 +174,17 @@ All MIT, all pinned with integrity hashes in `package-lock.json`:
 
 | Package | Version | Author |
 |---|---|---|
-| `@noble/curves` | 2.2.0 | Paul Miller |
-| `@noble/hashes` | 2.2.0 | Paul Miller |
-| `@scure/base` | 2.2.0 | Paul Miller |
-| `@scure/bip32` | 2.2.0 | Paul Miller |
-| `@scure/bip39` | 2.2.0 | Paul Miller |
+| `@noble/curves` | 2.3.0 | Paul Miller |
+| `@noble/hashes` | 2.3.0 | Paul Miller |
+| `@scure/base` | 2.3.0 | Paul Miller |
+| `@scure/bip32` | 2.3.0 | Paul Miller |
+| `@scure/bip39` | 2.3.0 | Paul Miller |
 
 `@scure/bip39` was audited by Cure53 in January 2022 (funded by the Ethereum
-Foundation) and self-audited in April 2026 at version 2.2.0 — the version
-pinned here.
+Foundation) and self-audited in April 2026 at version 2.2.0. The pinned 2.3.0
+release is newer than that audit scope; its published tarball diff and this
+project's independent vectors are reviewed, but no audit claim is made for the
+delta.
 
 ## Test vectors from specifications
 

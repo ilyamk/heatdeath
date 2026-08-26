@@ -195,7 +195,7 @@ under that ban: Electron's npm package is a stub that downloads the Chromium run
 afterwards, as a separate fetch. Removing `--ignore-scripts` nullifies the point of
 a pinned lockfile with integrity hashes.
 
-**2. The sandbox dies entirely.** Everything our permission model forbids is
+**2. The capability guard dies entirely.** Everything our permission model forbids is
 required by a GUI framework:
 
 ```
@@ -208,16 +208,21 @@ network: dns lookup     ERR_ACCESS_DENIED    <- Chromium's network stack
 This is not a setting that can be loosened selectively: `--permission` would have to
 be removed altogether, and `6/6 capability probes denied` would become `0/6`.
 
+Even at 6/6 this is only least privilege for reviewed code. Node documents the
+Permission Model as a seatbelt, not a security boundary against malicious code;
+artifact trust must come from provenance, signatures and reproducibility.
+
 **3. The runtime becomes a browser.** In [COMPARISON.md](COMPARISON.md) we justify
 our advantage over iancoleman/bip39 on the grounds that its "runtime is a browser:
 extensions inject into `file://`, the page is cached, and a heap of JavaScript ends
 up in swap". A webview GUI makes us exactly that, and the argument turns against us.
 
-**The cost in numbers.** Today: **5 packages, 3.6 MB, all from one author**, and of
-those `@scure/bip39` passed a Cure53 audit (January 2022) plus a self-audit in April
-2026 — on precisely the 2.2.0 version we pin. I will not claim an audit for the
-other four. A minimal GUI brings in a transitive tree orders of magnitude larger, in
-which nobody has checked anything.
+**The cost in numbers.** Today: **5 packages, about 2.9 MB, all from one author**, and of
+those `@scure/bip39` passed a Cure53 audit (January 2022) and was self-audited at
+2.2.0 in April 2026. We pin 2.3.0, whose delta has been reviewed and regression-
+tested here but is outside that audit scope. I will not claim an audit for the
+other four. A minimal GUI brings in a transitive tree orders of magnitude larger,
+in which nobody has checked anything.
 
 **The argument that outweighs the technical ones.** An interface attracts exactly
 the users least prepared to carry out an offline procedure. It will not turn off

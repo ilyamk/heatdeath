@@ -85,7 +85,7 @@
 | **Repetition Count** | A stuck-bit test: 5 identical bytes in a row | [ENTROPY.md](ENTROPY.md) |
 | **Adaptive Proportion** | A degenerate-distribution test: a value appearing ≥13 times in a window of 512 | [ENTROPY.md](ENTROPY.md) |
 | **χ² (chi-squared)** | A goodness-of-fit statistic. For dice, df = 5; a warning is printed at p < 0.001 | [ENTROPY.md](ENTROPY.md) |
-| **Pairwise probe distinctness** | Comparing probes from different sources. A match means a cloned VM, a restored snapshot or a stubbed RNG | [ENTROPY.md](ENTROPY.md) |
+| **Pairwise probe distinctness** | Comparing two OS-path probes. A match proves catastrophic duplicate/stubbed output; a mismatch proves neither independence nor absence of cloning | [ENTROPY.md](ENTROPY.md) |
 | **Diceware** | A method of generating a passphrase from dice rolls; one word ≈ 12.9 bits | [ENTROPY.md](ENTROPY.md) |
 
 ## Attacks and limits
@@ -105,7 +105,7 @@
 
 | Term | Meaning | More detail |
 |---|---|---|
-| **Share** | One mnemonic string from a set. On its own it reveals **nothing** | [THREAT-MODEL.md](THREAT-MODEL.md) |
+| **Share** | One mnemonic string from a set. It cannot recover the wallet alone; SLIP-39's 4-byte digest means the literal textbook zero-information claim does not apply (about 224 bits remain for our 256-bit secret) | [THREAT-MODEL.md](THREAT-MODEL.md) |
 | **Threshold** | The minimum number of shares needed to restore. Our default is 2 of 3 | [THREAT-MODEL.md](THREAT-MODEL.md) |
 | **Admissible subset** | Any set of shares satisfying the threshold. The tool verifies recovery from **every** such set before printing | [THREAT-MODEL.md](THREAT-MODEL.md) |
 | **Master secret** | The secret being split. Here it is BIP-39 entropy; Trezor reads it as a BIP-32 seed — hence the incompatibility | [THREAT-MODEL.md](THREAT-MODEL.md) |
