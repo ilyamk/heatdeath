@@ -15,7 +15,8 @@ changes release provenance or signatures.
 - package version 2.1.0 and local esbuild 0.28.2.
 
 It creates the bundle, the darwin/arm64 SEA, the deterministic
-`heatdeath-v2.1.0-source.tar.gz` source archive (`git archive | gzip -n`),
+`heatdeath-v2.1.0-source.tar.gz` source archive (Git archive compressed by the
+pinned Node/zlib build with a normalized RFC 1952 OS byte),
 `SOURCE-PROVENANCE.json`, and a manifest covering those files plus
 the build recipe and `heatdeath-v2.1.0.spdx.json` SPDX SBOM. Provenance records
 the tag, commit, lockfile, source archive and SBOM hashes, Node version and binary

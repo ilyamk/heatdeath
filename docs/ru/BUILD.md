@@ -9,7 +9,8 @@
 `npm run build:release` закрывается при любой неоднозначности. Нужны чистое
 рабочее дерево, аннотированный тег `v2.1.0` на `HEAD`, Node **v26.7.0** и
 **darwin/arm64**. Результат включает bundle, SEA, детерминированный архив исходников
-`heatdeath-v2.1.0-source.tar.gz` (`git archive | gzip -n`),
+`heatdeath-v2.1.0-source.tar.gz` (Git archive, сжатый закреплённой сборкой
+Node/zlib с нормализованным OS-байтом RFC 1952),
 `SOURCE-PROVENANCE.json`, рецепт, `heatdeath-v2.1.0.spdx.json` в формате SPDX SBOM
 и `SHA256SUMS`. Provenance фиксирует тег, commit, хеши lockfile, исходного архива
 и SBOM, версию и хеш бинарника Node, npm 11.19.0 из Node v26.7.0, esbuild, платформу и архитектуру.

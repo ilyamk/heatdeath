@@ -24,6 +24,7 @@ jobs:
     outputs:
       bundle-sha: ${{ steps.hash.outputs.bundle }}
       archive-sha: ${{ steps.hash.outputs.archive }}
+      tar-sha: ${{ steps.hash.outputs.tar }}
     steps:
       - name: Checkout without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,16 +42,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(node -p 'require("./package.json").version')"
-          git archive --format=tar --prefix="heatdeath-${version}/" HEAD | gzip -n -9 > /tmp/source-a.tar.gz
-          git archive --format=tar --prefix="heatdeath-${version}/" HEAD | gzip -n -9 > /tmp/source-b.tar.gz
+          node scripts/ci/create-source-archive.mjs /tmp/source-a.tar.gz HEAD
+          node scripts/ci/create-source-archive.mjs /tmp/source-b.tar.gz HEAD
           cmp /tmp/source-a.tar.gz /tmp/source-b.tar.gz
       - name: Export hashes
         id: hash
         shell: bash
         run: |
-          echo "bundle=$(shasum -a 256 dist/heatdeath.mjs | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          echo "archive=$(shasum -a 256 /tmp/source-a.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          {
+            echo "bundle=$(shasum -a 256 dist/heatdeath.mjs | awk '{print $1}')"
+            echo "archive=$(shasum -a 256 /tmp/source-a.tar.gz | awk '{print $1}')"
+            echo "tar=$(gzip -dc /tmp/source-a.tar.gz | shasum -a 256 | awk '{print $1}')"
+          } >> "$GITHUB_OUTPUT"
 
   macos:
     name: Clean macOS arm64 bundle
@@ -59,6 +62,7 @@ jobs:
     outputs:
       bundle-sha: ${{ steps.hash.outputs.bundle }}
       archive-sha: ${{ steps.hash.outputs.archive }}
+      tar-sha: ${{ steps.hash.outputs.tar }}
     steps:
       - name: Checkout without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,14 +80,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(node -p 'require("./package.json").version')"
-          git archive --format=tar --prefix="heatdeath-${version}/" HEAD | gzip -n -9 > /tmp/source.tar.gz
+          node scripts/ci/create-source-archive.mjs /tmp/source.tar.gz HEAD
       - name: Export hashes
         id: hash
         shell: bash
         run: |
-          echo "bundle=$(shasum -a 256 dist/heatdeath.mjs | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          echo "archive=$(shasum -a 256 /tmp/source.tar.gz | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          {
+            echo "bundle=$(shasum -a 256 dist/heatdeath.mjs | awk '{print $1}')"
+            echo "archive=$(shasum -a 256 /tmp/source.tar.gz | awk '{print $1}')"
+            echo "tar=$(gzip -dc /tmp/source.tar.gz | shasum -a 256 | awk '{print $1}')"
+          } >> "$GITHUB_OUTPUT"
 
   compare:
     name: Cross-runner byte equality
@@ -98,9 +104,12 @@ jobs:
           MACOS_BUNDLE: ${{ needs.macos.outputs.bundle-sha }}
           LINUX_ARCHIVE: ${{ needs.linux.outputs.archive-sha }}
           MACOS_ARCHIVE: ${{ needs.macos.outputs.archive-sha }}
+          LINUX_TAR: ${{ needs.linux.outputs.tar-sha }}
+          MACOS_TAR: ${{ needs.macos.outputs.tar-sha }}
         run: |
           set -euo pipefail
           [[ "$LINUX_BUNDLE" =~ ^[0-9a-f]{64}$ ]]
           [[ "$LINUX_BUNDLE" == "$MACOS_BUNDLE" ]]
+          [[ "$LINUX_TAR" == "$MACOS_TAR" ]]
           [[ "$LINUX_ARCHIVE" == "$MACOS_ARCHIVE" ]]
           echo "bundle $LINUX_BUNDLE and source archive reproduce across clean runners"

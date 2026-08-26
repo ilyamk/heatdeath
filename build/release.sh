@@ -39,8 +39,7 @@ fi
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
-git archive --format=tar --prefix="heatdeath-${VERSION}/" "$TAG" > "$tmp_dir/source.tar"
-gzip -n -9 < "$tmp_dir/source.tar" > "dist/$SOURCE_ARCHIVE"
+node scripts/ci/create-source-archive.mjs "dist/$SOURCE_ARCHIVE" "$TAG"
 npm sbom --sbom-format=spdx > "$tmp_dir/sbom.json"
 source_epoch="$(git show -s --format=%ct "$TAG^{commit}")"
 node scripts/ci/canonicalize-sbom.mjs \
