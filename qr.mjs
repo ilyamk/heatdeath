@@ -637,8 +637,12 @@ const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 export function encodeAddressQRs(addresses, { ecc = "L" } = {}) {
   assert.ok(Array.isArray(addresses) && addresses.length > 0, "no addresses given");
   addresses.forEach((address, i) => {
+    assert.equal(
+      typeof address, "string",
+      `entry ${i} must be a primitive string; objects are never QR-encoded`,
+    );
     assert.match(
-      String(address), EVM_ADDRESS,
+      address, EVM_ADDRESS,
       `entry ${i} is not an EVM address. This encoder accepts addresses only - ` +
         "it must never be handed a mnemonic, key, share or extended public key.",
     );

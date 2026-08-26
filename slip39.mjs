@@ -427,6 +427,25 @@ const rs1024Verify = (data, extendable) =>
 const bitsToWords = (bits) => Math.ceil(bits / RADIX_BITS);
 
 export function encodeShare(share) {
+  assert.ok(Number.isInteger(share.identifier) && share.identifier >= 0 &&
+    share.identifier < 2 ** ID_LENGTH_BITS, "identifier out of range");
+  assert.ok(Number.isInteger(share.iterationExponent) && share.iterationExponent >= 0 &&
+    share.iterationExponent < 2 ** ITERATION_EXP_LENGTH_BITS,
+  "iteration exponent out of range");
+  assert.ok(Number.isInteger(share.groupCount) && share.groupCount >= 1 &&
+    share.groupCount <= MAX_SHARE_COUNT, "group count out of range");
+  assert.ok(Number.isInteger(share.groupIndex) && share.groupIndex >= 0 &&
+    share.groupIndex < share.groupCount, "group index must be below group count");
+  assert.ok(Number.isInteger(share.groupThreshold) && share.groupThreshold >= 1 &&
+    share.groupThreshold <= share.groupCount, "group threshold out of range");
+  assert.ok(Number.isInteger(share.memberIndex) && share.memberIndex >= 0 &&
+    share.memberIndex < MAX_SHARE_COUNT, "member index out of range");
+  assert.ok(Number.isInteger(share.memberThreshold) && share.memberThreshold >= 1 &&
+    share.memberThreshold <= MAX_SHARE_COUNT, "member threshold out of range");
+  assert.ok(Buffer.isBuffer(share.value) || share.value instanceof Uint8Array,
+    "share value must be bytes");
+  assert.ok(share.value.length >= MIN_STRENGTH_BITS / 8 && share.value.length % 2 === 0,
+    "share value must have a valid even byte length");
   const valueWordCount = bitsToWords(share.value.length * 8);
   let acc = 0n;
   const push = (v, bits) => {
@@ -454,7 +473,8 @@ export function encodeShare(share) {
 }
 
 export function decodeShare(mnemonic) {
-  const words = String(mnemonic).toLowerCase().trim().split(/\s+/).filter(Boolean);
+  assert.equal(typeof mnemonic, "string", "SLIP-39 mnemonic must be a primitive string");
+  const words = mnemonic.toLowerCase().trim().split(/\s+/).filter(Boolean);
   assert.ok(
     words.length >= METADATA_LENGTH_WORDS + bitsToWords(MIN_STRENGTH_BITS),
     `A SLIP-39 share has at least ${
@@ -515,6 +535,10 @@ export function decodeShare(mnemonic) {
     groupCount >= groupThreshold,
     "Invalid SLIP-39 share: group threshold exceeds group count",
   );
+  assert.ok(
+    groupIndex < groupCount,
+    "Invalid SLIP-39 share: group index is outside the declared group count",
+  );
 
   return {
     identifier, extendable, iterationExponent, groupIndex, groupThreshold,
@@ -549,12 +573,13 @@ export function splitSecretIntoShares({
   assert.ok(Array.isArray(groups) && groups.length >= 1, "At least one group required");
   assert.ok(groups.length <= MAX_SHARE_COUNT, `At most ${MAX_SHARE_COUNT} groups`);
   assert.ok(
-    groupThreshold >= 1 && groupThreshold <= groups.length,
+    Number.isInteger(groupThreshold) && groupThreshold >= 1 && groupThreshold <= groups.length,
     "Group threshold must be between 1 and the number of groups",
   );
   for (const g of groups) {
     assert.ok(
-      g.threshold >= 1 && g.threshold <= g.count && g.count <= MAX_SHARE_COUNT,
+      Number.isInteger(g.threshold) && Number.isInteger(g.count) &&
+        g.threshold >= 1 && g.threshold <= g.count && g.count <= MAX_SHARE_COUNT,
       `Invalid group ${JSON.stringify(g)}`,
     );
     assert.ok(
@@ -661,12 +686,27 @@ export function combineShares(mnemonics, passphrase = "") {
   );
 }
 
-/** Binomial coefficient. Exact for the small values this module deals with. */
-function choose(n, k) {
-  if (k < 0 || k > n) return 0;
-  let r = 1;
-  for (let i = 0; i < k; i += 1) r = (r * (n - i)) / (i + 1);
-  return Math.round(r);
+/** Exact binomial coefficient. */
+function chooseBig(n, k) {
+  if (k < 0 || k > n) return 0n;
+  k = Math.min(k, n - k);
+  let r = 1n;
+  for (let i = 1; i <= k; i += 1) {
+    r = (r * BigInt(n - k + i)) / BigInt(i);
+  }
+  return r;
+}
+
+function combinationsOfIndexes(n, k) {
+  const out = [];
+  const visit = (start, chosen) => {
+    if (chosen.length === k) { out.push(chosen); return; }
+    for (let i = start; i <= n - (k - chosen.length); i += 1) {
+      visit(i + 1, [...chosen, i]);
+    }
+  };
+  visit(0, []);
+  return out;
 }
 
 /**
@@ -676,39 +716,96 @@ function choose(n, k) {
  * with a group threshold of 2 is C(16,8)^2, about 165 million. Callers must
  * consult this before asking for the full list.
  */
-export function countAdmissibleSubsets(groupThreshold, groups) {
-  const combos = (arr, k) => {
-    if (k === 0) return [[]];
-    if (arr.length < k) return [];
-    const [head, ...rest] = arr;
-    return [...combos(rest, k - 1).map((c) => [head, ...c]), ...combos(rest, k)];
-  };
-  let total = 0;
-  for (const chosen of combos(groups.map((_, i) => i), groupThreshold)) {
-    let product = 1;
-    for (const gi of chosen) product *= choose(groups[gi].count, groups[gi].threshold);
+export function countAdmissibleSubsetsExact(groupThreshold, groups) {
+  assert.ok(Array.isArray(groups) && groups.length >= 1 && groups.length <= MAX_SHARE_COUNT,
+    "invalid group list");
+  assert.ok(Number.isInteger(groupThreshold) && groupThreshold >= 1 &&
+    groupThreshold <= groups.length, "invalid group threshold");
+  for (const group of groups) {
+    assert.ok(Number.isInteger(group.count) && Number.isInteger(group.threshold) &&
+      group.threshold >= 1 && group.threshold <= group.count &&
+      group.count <= MAX_SHARE_COUNT, "invalid group layout");
+  }
+  let total = 0n;
+  for (const chosen of combinationsOfIndexes(groups.length, groupThreshold)) {
+    let product = 1n;
+    for (const gi of chosen) {
+      product *= chooseBig(groups[gi].count, groups[gi].threshold);
+    }
     total += product;
   }
   return total;
 }
 
-/** One uniformly chosen admissible subset. For sampling when exhaustion is out. */
-export function randomAdmissibleSubset(groupThreshold, groups, mnemonics, rng) {
-  const pick = (arr, k) => {
-    const pool = [...arr];
-    const out = [];
-    for (let i = 0; i < k; i += 1) {
-      const j = rng(4).readUInt32BE(0) % pool.length;
-      out.push(pool.splice(j, 1)[0]);
+export function countAdmissibleSubsets(groupThreshold, groups) {
+  const exact = countAdmissibleSubsetsExact(groupThreshold, groups);
+  assert.ok(exact <= BigInt(Number.MAX_SAFE_INTEGER),
+    "admissible subset count exceeds Number.MAX_SAFE_INTEGER; use the exact API");
+  return Number(exact);
+}
+
+function unrankCombination(items, k, rank) {
+  const out = [];
+  let start = 0;
+  for (let left = k; left > 0; left -= 1) {
+    for (let i = start; i <= items.length - left; i += 1) {
+      const block = chooseBig(items.length - i - 1, left - 1);
+      if (rank < block) {
+        out.push(items[i]);
+        start = i + 1;
+        break;
+      }
+      rank -= block;
     }
-    return out;
-  };
-  const chosenGroups = pick(groups.map((_, i) => i), groupThreshold);
+  }
+  return out;
+}
+
+export function admissibleSubsetAtRank(groupThreshold, groups, mnemonics, rank) {
+  const total = countAdmissibleSubsetsExact(groupThreshold, groups);
+  assert.ok(typeof rank === "bigint" && rank >= 0n && rank < total,
+    "admissible subset rank out of range");
+  const groupSets = combinationsOfIndexes(groups.length, groupThreshold);
+  let chosenGroups;
+  for (const candidate of groupSets) {
+    const weight = candidate.reduce((product, gi) =>
+      product * chooseBig(groups[gi].count, groups[gi].threshold), 1n);
+    if (rank < weight) { chosenGroups = candidate; break; }
+    rank -= weight;
+  }
+  assert.ok(chosenGroups, "internal admissible subset unranking failure");
   const subset = [];
   for (const gi of chosenGroups) {
-    subset.push(...pick(mnemonics[gi], groups[gi].threshold));
+    const count = chooseBig(groups[gi].count, groups[gi].threshold);
+    const memberRank = rank % count;
+    rank /= count;
+    subset.push(...unrankCombination(mnemonics[gi], groups[gi].threshold, memberRank));
   }
   return subset;
+}
+
+function randomBigIntBelow(limit, rng) {
+  assert.ok(limit > 0n);
+  const bits = limit.toString(2).length;
+  const bytes = Math.ceil(bits / 8);
+  const mask = (1n << BigInt(bits)) - 1n;
+  for (;;) {
+    const candidate = BigInt(`0x${Buffer.from(rng(bytes)).toString("hex") || "0"}`) & mask;
+    if (candidate < limit) return candidate;
+  }
+}
+
+export function randomAdmissibleRank(total, rng) {
+  assert.ok(typeof total === "bigint" && total > 0n, "total must be a positive bigint");
+  return randomBigIntBelow(total, rng);
+}
+
+/** One uniformly chosen admissible subset, sampled by exact global rank. */
+export function randomAdmissibleSubset(groupThreshold, groups, mnemonics, rng) {
+  const total = countAdmissibleSubsetsExact(groupThreshold, groups);
+  return admissibleSubsetAtRank(
+    groupThreshold, groups, mnemonics, randomAdmissibleRank(total, rng),
+  );
 }
 
 /** Every admissible combination of shares, for the exhaustive round-trip test. */

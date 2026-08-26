@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+import { spawnSync } from "node:child_process";
+import path from "node:path";
+import process from "node:process";
+
+const ROOT = path.resolve(import.meta.dirname, "..");
+const separator = process.argv.indexOf("--");
+if (separator < 0) throw new Error("run-source requires arguments after --");
+const args = process.argv.slice(separator + 1);
+process.stderr.write(
+  "WARNING: source-checkout mode is not release-signature verified and grants\n" +
+    "read access to the repository for ESM dependencies. Audit this tree first.\n",
+);
+const nodeArgs = ["--permission", "--allow-fs-read=.", "--allow-fs-read=/dev/urandom"];
+if (args.includes("--op-export")) nodeArgs.push("--allow-child-process");
+const child = spawnSync(process.execPath, [...nodeArgs, "generate.mjs", ...args], {
+  cwd: ROOT,
+  stdio: "inherit",
+});
+if (child.error) throw child.error;
+process.exit(child.status ?? 1);
