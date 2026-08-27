@@ -6,6 +6,7 @@ files reach `main`, an administrator runs:
 ```sh
 node scripts/configure-github.mjs --apply-security
 node scripts/configure-github.mjs --apply-rulesets
+node scripts/configure-github.mjs --apply-community
 node scripts/configure-github.mjs
 ```
 
@@ -18,6 +19,11 @@ refuses to proceed until all required workflows exist on remote `main`; it then
 protects `main` with pull requests, resolved conversations, strict required CI,
 and force-push/deletion prevention. It also makes `v*` tags non-rewritable and
 non-deletable.
+
+The third command enables GitHub Discussions. In repository settings, create a
+category named `Commercial inquiries`; the tracked form explicitly forbids secrets,
+wallet balances and confidential deal terms. Move the conversation to a private
+channel before discussing an organisation or contract.
 
 The required checks cover the supported Node matrix, repository/documentation
 contracts, three independent cryptographic/format oracles, macOS release-runtime

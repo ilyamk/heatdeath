@@ -9,6 +9,22 @@ Time: about 30 minutes. You will need a die and paper.
 
 ---
 
+## Safe/DAO cold owner: rehearse first
+
+If your goal is one cold or recovery owner for a Safe, use the dedicated profile
+instead of the general wallet wizard. The rehearsal contains public test data only.
+
+```sh
+npm run rehearse:safe-owner
+npm run doctor
+npm run safe-owner
+```
+
+Read [docs/en/SAFE-OWNER.md](docs/en/SAFE-OWNER.md) before the real command. Generate
+every Safe owner independently. This command does not deploy a Safe or sign a transaction.
+
+---
+
 ## First decide WHERE to run it
 
 This decision matters more than every other one in this document. The tool is an
@@ -53,38 +69,40 @@ is not running.
    for.
 2. Write it to the first stick.
 3. Put the following on the second stick:
-   - `dist/heatdeath.mjs` — the only file the tool needs;
-   - the official Node tarball for **linux-x64** from
-     [nodejs.org/dist](https://nodejs.org/dist/) (do not install it, just unpack
-     it), and the `SHASUMS256.txt` file from the same place;
-   - a file with the expected SHA-256 of our bundle — take it from
-     `dist/SHA256SUMS`.
+   - the v2.2 `heatdeath-linux-x64` release binary;
+   - the signed `SHA256SUMS` and the independently trusted public-key
+     fingerprints used to verify that release;
+   - optionally `heatdeath.mjs` and the exact Node linux-x64 archive if you prefer
+     to run the readable primary artifact instead.
 
-> **Why the bundle rather than the binary.** Our prebuilt binary is built for
-> darwin/arm64 and will not run under Linux. Node SEA cannot cross-compile, so we
-> have no Linux build. The `.mjs` bundle works anywhere Node exists, and it stays
-> readable — which for this procedure is even better.
+Verify the complete release while still online by following
+[docs/en/VERIFY.md](docs/en/VERIFY.md), then record the expected Linux binary
+SHA-256 separately. The native artifact removes Node installation from the
+offline ceremony; the readable `.mjs` bundle remains the primary audit target.
 
 ### Generation
 
 1. Boot the x86 computer from the Tails stick. **Do not set up Persistent
    Storage** — the amnesia is the whole point of Tails.
 2. Turn off the network in Tails (it can also start without it on its own).
-3. Plug in the second stick, unpack Node, verify the checksums:
+3. Plug in the second stick, copy the binary to Tails' temporary filesystem and
+   compare it with the hash from the signed manifest:
 
 ```sh
-sha256sum -c SHASUMS256.txt --ignore-missing     # checking Node itself
-tar -xJf node-v*-linux-x64.tar.xz
-sha256sum heatdeath.mjs                       # compare against dist/SHA256SUMS
+cp /media/amnesia/*/heatdeath-linux-x64 /tmp/heatdeath-linux-x64
+sha256sum /tmp/heatdeath-linux-x64
+chmod 0755 /tmp/heatdeath-linux-x64
 ```
 
-4. Run it under the permission model:
+4. Run the embedded self-test, then the appropriate ceremony. The SEA already
+   embeds the strict permission-model flags:
 
 ```sh
-./node-v*-linux-x64/bin/node   --permission --allow-fs-read=. --allow-fs-read=/dev/urandom   heatdeath.mjs --self-test
-
-./node-v*-linux-x64/bin/node   --permission --allow-fs-read=. --allow-fs-read=/dev/urandom   heatdeath.mjs --wizard --dice
+/tmp/heatdeath-linux-x64 --self-test
+/tmp/heatdeath-linux-x64 --wizard --dice
 ```
+
+For a Safe cold/recovery owner, use `--safe-owner` instead of `--wizard --dice`.
 
 5. From there it is as usual: dice, writing on paper, the mandatory check.
 6. Shut the computer down. Tails has saved nothing: RAM is wiped at shutdown and

@@ -2,14 +2,15 @@
 
 # ☄️ HEATDEATH
 
-**An offline BIP-39 / EVM seed generator that proves its properties instead of claiming them.**
+**A verifiable offline ceremony for Safe cold/recovery owners and EVM backups.**
 
-Every guarantee on this page is a command you can run. None of them is a promise.
+Critical generation and recovery properties are independently testable commands,
+not marketing promises.
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![Runtime deps](https://img.shields.io/badge/runtime%20deps-0-brightgreen)](NOTICE.md)
 [![Guard](https://img.shields.io/badge/capability%20guard-6%2F6%20denied-brightgreen)](#-what-makes-this-different)
-[![Self-test](https://img.shields.io/badge/self--test-21%20groups-brightgreen)](#-what-makes-this-different)
+[![Self-test](https://img.shields.io/badge/self--test-22%20groups-brightgreen)](#-what-makes-this-different)
 [![Build](https://img.shields.io/badge/build-reproducible-brightgreen)](docs/en/VERIFY.md)
 [![Signatures](https://img.shields.io/badge/signed-Ed25519%20%2B%20ML--DSA%20%2B%20SLH--DSA-blueviolet)](#-verify-before-you-trust)
 [![CI](https://github.com/ilyamk/heatdeath/actions/workflows/ci.yml/badge.svg)](https://github.com/ilyamk/heatdeath/actions/workflows/ci.yml)
@@ -17,6 +18,7 @@ Every guarantee on this page is a command you can run. None of them is a promise
 [![Reproducibility](https://github.com/ilyamk/heatdeath/actions/workflows/reproducible-build.yml/badge.svg)](https://github.com/ilyamk/heatdeath/actions/workflows/reproducible-build.yml)
 
 [Quick start](#-quick-start) ·
+[Safe owner ceremony](docs/en/SAFE-OWNER.md) ·
 [Why this exists](#-the-problem) ·
 [What it does not do](#-where-this-loses) ·
 [Full docs](README.en.md) ·
@@ -71,11 +73,11 @@ Not features. Checks you can run yourself, right now.
 
 | | Guarantee | Verify it |
 |:--:|:--|:--|
-| 🧪 | **Known-answer vectors gate the output.** BIP-39, EIP-55, BIP-32 and a wordlist SHA-256 run *before any secret exists*. One mismatch and nothing is printed. | `npm run self-test` → 21 groups |
+| 🧪 | **Known-answer vectors gate the output.** BIP-39, EIP-55, BIP-32 and a wordlist SHA-256 run *before any secret exists*. One mismatch and nothing is printed. | `npm run self-test` → 22 groups |
 | ♊ | **Two independent implementations must agree.** BIP-39 encoding, PBKDF2 and BIP-32 CKDpriv are computed twice — via `@scure`, and again on bare `node:crypto`. Disagreement is a refusal. | included in the self-test |
 | 🔒 | **Least privilege for trusted code.** Node's Permission Model denies network, DNS, subprocesses, workers and filesystem writes. Source checkouts get repository read access; a verified release bundle gets only `/dev/urandom`. It is a capability guard, not a malicious-code sandbox. | `npm run prove-guard` → `6/6 denied` |
 | 🎲 | **Two required OS entropy paths.** OpenSSL `randomBytes` and a direct `/dev/urandom` read are XORed after domain-separated SHA-256 and catastrophic-output tests. Optional physical dice are the only source independent of the machine. Unequal samples do not prove independence. | printed at generation |
-| 🚫 | **Refuses to run where secrecy is impossible.** SSH session, attached debugger, redirected stdout — hard stop, before a secret exists. | try it |
+| 🚫 | **Refuses to run where secrecy is impossible.** SSH session, attached debugger, redirected stdin or stdout — hard stop, before a secret exists. | try it |
 | ✍️ | **Catches the mistake that actually loses money.** The wizard blanks the screen and makes you type the phrase back from paper, comparing word by word. | `npm run wizard` |
 | 🧩 | **Threshold backup, verified before it is shown.** SLIP-39 2-of-3, checked against 45 official Trezor vectors and recovered from *every* admissible subset. | `npm run split` |
 | 🔁 | **Reproducible and signed.** Two builds produce an identical hash. The manifest carries three signatures on three different hardness assumptions. | `npm run verify-release` |
@@ -89,8 +91,20 @@ Not features. Checks you can run yourself, right now.
 
 ## 🚀 Quick start
 
-> **Read [`QUICKSTART.en.md`](QUICKSTART.en.md) before generating anything you intend to fund.**
+> **Read [`docs/en/SAFE-OWNER.md`](docs/en/SAFE-OWNER.md) before creating an owner for a Safe.**
 > The steps below are the shape of it, not a substitute for it.
+
+### Safe/DAO: rehearse first
+
+```sh
+npm run rehearse:safe-owner   # public fixture; never fund its address
+npm run doctor                # readiness report; creates no secret
+npm run safe-owner            # one cold/recovery owner
+```
+
+This profile creates one owner only. Never derive several Safe owners from one
+phrase. It does not deploy a Safe or sign transactions, and importing the phrase
+into an online wallet ends its cold status.
 
 ### 1 · Get it and check it — while still online
 
@@ -220,6 +234,8 @@ other file for file.
 | | |
 |:--|:--|
 | [**QUICKSTART.en.md**](QUICKSTART.en.md) | The full procedure — including Tails, VMs and 1Password |
+| [docs/en/SAFE-OWNER.md](docs/en/SAFE-OWNER.md) | Safe/DAO cold-owner rehearsal, ceremony and recovery check |
+| [docs/en/COMMERCIAL.md](docs/en/COMMERCIAL.md) | Design partners, support/SLA and commercial embedding |
 | [**README.en.md**](README.en.md) | Complete reference, every claim with its measurement |
 | [docs/en/THREAT-MODEL.md](docs/en/THREAT-MODEL.md) | What is closed, what cannot be, and why containers do not help |
 | [docs/en/ENTROPY.md](docs/en/ENTROPY.md) | Entropy, the strength proof, post-quantum analysis |
@@ -239,6 +255,9 @@ other file for file.
 
 ```
 npm run wizard           guided end-to-end setup — start here
+npm run rehearse:safe-owner  public Safe cold-owner rehearsal
+npm run doctor           inspect readiness without creating a secret
+npm run safe-owner       create one Safe cold/recovery owner
 npm run self-test        every known-answer and negative test
 npm run generate         create a wallet directly
 npm run verify           re-derive from a phrase you type
@@ -273,7 +292,8 @@ it, so it has to stay readable. A closed fork of a seed generator — unauditabl
 with no obligation to disclose what changed — is exactly the artifact the rest of
 this documentation argues against.
 
-**Commercial licensing** is available if AGPL does not fit. Contributions are
+**Commercial licensing and support/SLA** are available if AGPL does not fit or a
+team needs a reviewed ceremony. See [commercial use](docs/en/COMMERCIAL.md). Contributions are
 accepted under the CLA in [CONTRIBUTING.md](CONTRIBUTING.md).
 Third-party notices: [NOTICE.md](NOTICE.md).
 
