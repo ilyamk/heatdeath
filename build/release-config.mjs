@@ -20,6 +20,12 @@ export function readReleaseConfig(root = path.resolve(import.meta.dirname, "..")
   const version = pkg.version;
   const sourceArchive = `heatdeath-v${version}-source.tar.gz`;
   const sbom = `heatdeath-v${version}.spdx.json`;
+  const nativeArtifacts = Object.freeze([
+    Object.freeze({ platform: "darwin", arch: "arm64", name: "heatdeath-darwin-arm64" }),
+    Object.freeze({ platform: "linux", arch: "x64", name: "heatdeath-linux-x64" }),
+  ]);
+  const provenanceArtifacts = nativeArtifacts.map(({ platform, arch }) =>
+    `SOURCE-PROVENANCE-${platform}-${arch}.json`);
   return Object.freeze({
     version,
     tag: `v${version}`,
@@ -28,13 +34,16 @@ export function readReleaseConfig(root = path.resolve(import.meta.dirname, "..")
     esbuild,
     sourceArchive,
     sbom,
+    nativeArtifacts,
+    provenanceArtifacts: Object.freeze(provenanceArtifacts),
     allowedArtifacts: new Set([
-      "heatdeath.mjs", "heatdeath", sourceArchive, sbom,
-      "SOURCE-PROVENANCE.json", "BUILD-RECIPE.txt",
+      "heatdeath.mjs", sourceArchive, sbom, "BUILD-RECIPE.txt",
+      ...nativeArtifacts.map(({ name }) => name), ...provenanceArtifacts,
     ]),
     requiredArtifacts: [
       "heatdeath.mjs", sourceArchive, sbom,
-      "SOURCE-PROVENANCE.json", "BUILD-RECIPE.txt",
+      "BUILD-RECIPE.txt", ...nativeArtifacts.map(({ name }) => name),
+      ...provenanceArtifacts,
     ],
   });
 }

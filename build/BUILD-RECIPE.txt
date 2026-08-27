@@ -1,15 +1,21 @@
-Reproduce HEATDEATH v2.1.0
+Reproduce HEATDEATH v2.2.0
 ==========================
 
-1. Obtain the annotated tag v2.1.0 and independently pin its commit.
-2. Use Node v26.7.0 on darwin/arm64.
+1. Obtain the annotated tag v2.2.0 and independently pin its commit.
+2. Use Node v26.7.0 independently on darwin/arm64 and linux/x64.
 3. Confirm npm 11.19.0, then run `npm ci --ignore-scripts`; verify the lockfile
    and registry attestations independently.
-4. Run `npm run build:release` from a clean tagged worktree.
-5. Check the SPDX SBOM and verify with
+4. Run `npm run build:release` from a clean tagged worktree on each platform.
+   The common bundle, source archive, SBOM and recipe must match byte-for-byte.
+   The common SBOM excludes only host-selected optional native helpers; their
+   logical package remains and the full lockfile hash is recorded in provenance.
+5. Combine `heatdeath-darwin-arm64`, `heatdeath-linux-x64` and their two
+   SOURCE-PROVENANCE files with one copy of the matching common artifacts,
+   then run `node build/finalize-release.mjs dist`.
+6. Check the SPDX SBOM and verify with
    `npm run verify-release -- --trusted-keys=/independent/key/dir`.
 
-The JavaScript bundle is the primary auditable artifact. The SEA convenience
-binary additionally embeds the exact Node runtime and is reproducible only for
-the pinned Node build and platform. Node's Permission Model is a trusted-code
-capability guard, not a sandbox for malicious code.
+The JavaScript bundle is the primary auditable artifact. Each SEA convenience
+binary embeds the exact Node runtime and is reproducible only on its named
+platform. Node's Permission Model is a trusted-code capability guard, not a
+sandbox for malicious code.

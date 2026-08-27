@@ -26,8 +26,9 @@
    what executes.
 2. **The bundle** `dist/heatdeath.mjs` — 300 KB, no dependencies, human-readable,
    byte-for-byte reproducible.
-3. **The binary** `dist/heatdeath` — 144 MB. Convenience only. Treat it as
-   unverified until you have reproduced its SHA-256 yourself.
+3. **Native binaries** `dist/heatdeath-darwin-arm64` and
+   `dist/heatdeath-linux-x64` — convenience only. Treat either as unverified
+   until you have reproduced its SHA-256 on the named platform.
 
 The further down this list you go, the more you are trusting somebody else.
 
@@ -43,20 +44,19 @@ signature boundary is required.
 
 ```sh
 npm run verify-release -- --trusted-keys=/absolute/independent/key-directory
-# add --require-all when the darwin/arm64 SEA was downloaded too
 ```
 
 The verifier first checks all three signatures, then parses `SHA256SUMS` with a
 strict grammar. Absolute paths, `..`, unexpected names, duplicate entries and
 malformed hashes are fatal. The bundle, deterministic source archive, provenance
-record and build recipe are mandatory; only the large SEA is optional unless
-`--require-all` is set.
+records, build recipe and both native artifacts are mandatory.
 
 GitHub Release downloads do not preserve the SEA's Unix executable mode. Restore
 that local metadata only after verification:
 
 ```sh
-chmod 0755 ./dist/heatdeath
+chmod 0755 ./dist/heatdeath-darwin-arm64
+chmod 0755 ./dist/heatdeath-linux-x64
 ```
 
 Expected:
@@ -69,11 +69,13 @@ Expected:
 
 ==> artifact hashes
   ok    heatdeath.mjs
-  ok    heatdeath-v2.1.0-source.tar.gz
-  ok    heatdeath-v2.1.0.spdx.json
-  ok    SOURCE-PROVENANCE.json
+  ok    heatdeath-v2.2.0-source.tar.gz
+  ok    heatdeath-v2.2.0.spdx.json
+  ok    heatdeath-darwin-arm64
+  ok    heatdeath-linux-x64
+  ok    SOURCE-PROVENANCE-darwin-arm64.json
+  ok    SOURCE-PROVENANCE-linux-x64.json
   ok    BUILD-RECIPE.txt
-  --    heatdeath SEA absent (optional)
 ```
 
 ### What this proves and what it does not
@@ -100,15 +102,15 @@ and compare".
 ```sh
 npm ci --ignore-scripts
 npm run build
-# the full tagged darwin/arm64 release: npm run build:release
+npm run build:release
 ```
 
 Exact versions and details are in `dist/BUILD-RECIPE.txt`.
 
 - **The `.mjs` bundle reproduces on any machine** with the same esbuild version.
   It contains neither absolute paths nor timestamps.
-- **The binary reproduces only against the same Node build** (v26.7.0,
-  darwin/arm64), because it embeds the entire runtime.
+- **Each binary reproduces only against the same Node build** (v26.7.0) on its
+  named darwin/arm64 or linux/x64 platform, because it embeds the entire runtime.
 
 Two subtleties, both established by measurement rather than assumption:
 
@@ -128,7 +130,7 @@ no build at all.
 
 ```sh
 npm run prove-guard:verified      # signed bundle, capability scope only
-./dist/heatdeath --prove-guard    # from the binary - not proof by itself
+./dist/heatdeath-darwin-arm64 --prove-guard
 ```
 
 The binary contains the source **as plain text**: `strings` extracts it verbatim,
@@ -174,7 +176,7 @@ kills it **without a single message** — exit 137, empty stdout and stderr. It 
 exactly like "nothing happens".
 
 ```sh
-xattr -d com.apple.quarantine ./heatdeath
+xattr -d com.apple.quarantine ./heatdeath-darwin-arm64
 ```
 
 We do not notarise builds: that costs $99/year and binds the release to a legal

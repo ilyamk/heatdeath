@@ -19,7 +19,11 @@ const expected = new Set([
     `${scheme}.pub.pem`, `SHA256SUMS.${scheme}.sig`,
   ]),
 ]);
-if (requireAll) expected.add("heatdeath");
+if (!requireAll) {
+  for (const name of [
+    ...config.nativeArtifacts.map(({ name }) => name), ...config.provenanceArtifacts,
+  ]) expected.delete(name);
+}
 
 const actual = new Set(fs.readdirSync(directory));
 assert.deepEqual(

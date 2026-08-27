@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 10
     environment: release-verification
     permissions:
-      contents: write # draft releases are visible only to principals with push access
+      contents: write
     outputs:
       tag: ${{ steps.release.outputs.tag }}
     steps:
@@ -51,25 +51,22 @@ jobs:
               --jq '.[] | select(.tag_name == env.RELEASE_TAG) | .id'
           })"
           [[ "$release_id" =~ ^[0-9]+$ ]]
-
           asset_rows="$({
             gh api \
               "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
               --jq '.[] | [.id, .name] | @tsv'
           })"
           [[ -n "$asset_rows" ]]
-
           mkdir downloaded
           while IFS=$'\t' read -r asset_id asset_name; do
             [[ "$asset_id" =~ ^[0-9]+$ ]]
             [[ "$asset_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
             [[ ! -e "downloaded/$asset_name" ]]
-            gh api \
-              -H "Accept: application/octet-stream" \
+            gh api -H "Accept: application/octet-stream" \
               "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
               > "downloaded/$asset_name"
           done <<< "$asset_rows"
-      - name: Stage assets for the read-only verification job
+      - name: Stage assets for read-only verification jobs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-assets-${{ steps.release.outputs.tag }}
@@ -79,9 +76,21 @@ jobs:
           compression-level: 0
 
   verify:
-    name: Signatures, rebuild and runtime proof
+    name: Verify ${{ matrix.id }} release
     needs: fetch
-    runs-on: macos-26
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: darwin-arm64
+            runner: macos-26
+            native: heatdeath-darwin-arm64
+            provenance: SOURCE-PROVENANCE-darwin-arm64.json
+          - id: linux-x64
+            runner: ubuntu-24.04
+            native: heatdeath-linux-x64
+            provenance: SOURCE-PROVENANCE-linux-x64.json
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     environment: release-verification
     permissions:
@@ -99,57 +108,63 @@ jobs:
         with:
           node-version-file: source/.node-version-release
           package-manager-cache: false
-      - name: Verify the npm bundled with the pinned Node.js release
+      - name: Verify exact npm
         run: test "$(npm --version)" = "11.19.0"
-      - name: Download assets staged by the isolated fetch job
+      - name: Download assets staged by isolated fetch
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-assets-${{ needs.fetch.outputs.tag }}
           path: downloaded
       - name: Enforce exact release asset allow-list
         run: node source/scripts/ci/check-release-assets.mjs "$GITHUB_WORKSPACE/downloaded" --require-all
-      - name: Install locked source dependencies without lifecycle scripts
+      - name: Install locked dependencies without lifecycle scripts
         working-directory: source
         run: npm ci --ignore-scripts
-      - name: Verify three signatures, manifest, SBOM and provenance
+      - name: Verify signatures, hashes, SBOM and both provenance records
         run: >-
           node source/build/verify-release.mjs
           --dist="$GITHUB_WORKSPACE/downloaded"
           --trusted-keys="$GITHUB_WORKSPACE/source/dist"
           --require-all
-      - name: Compare distributed public identities with independently pinned source
+      - name: Compare distributed public identities with pinned source
         shell: bash
         run: |
           set -euo pipefail
           for scheme in ed25519 ml-dsa-87 slh-dsa-sha2-128s; do
             cmp "downloaded/$scheme.pub.pem" "source/dist/$scheme.pub.pem"
           done
-      - name: Rebuild exact tagged release independently
+      - name: Rebuild this platform independently
         working-directory: source
         run: npm run build:release
-      - name: Compare every reproducible release byte
+      - name: Compare reproducible common and native bytes
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.fetch.outputs.tag }}
+          NATIVE: ${{ matrix.native }}
+          PROVENANCE: ${{ matrix.provenance }}
         run: |
           set -euo pipefail
           version="${RELEASE_TAG#v}"
-          for name in \
-            heatdeath.mjs heatdeath \
+          for name in heatdeath.mjs "$NATIVE" \
             "heatdeath-v${version}-source.tar.gz" \
-            "heatdeath-v${version}.spdx.json" \
-            SOURCE-PROVENANCE.json BUILD-RECIPE.txt SHA256SUMS; do
+            "heatdeath-v${version}.spdx.json" "$PROVENANCE" BUILD-RECIPE.txt; do
             cmp "downloaded/$name" "source/dist/$name"
           done
-      - name: Verify SEA code signature and capability guard
+      - name: Execute native self-test and capability proof
+        shell: bash
+        env:
+          NATIVE: ${{ matrix.native }}
         run: |
-          test -x source/dist/heatdeath
-          chmod 0755 downloaded/heatdeath
-          codesign --verify --deep --strict downloaded/heatdeath
-          downloaded/heatdeath --self-test
-          downloaded/heatdeath --prove-guard
+          set -euo pipefail
+          chmod 0755 "downloaded/$NATIVE"
+          "downloaded/$NATIVE" --self-test
+          "downloaded/$NATIVE" --prove-guard
+      - name: Verify macOS code signature
+        if: matrix.id == 'darwin-arm64'
+        run: codesign --verify --deep --strict downloaded/heatdeath-darwin-arm64
       - name: Verify GitHub build attestation
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh attestation verify downloaded/heatdeath --repo "$GITHUB_REPOSITORY"
+          NATIVE: ${{ matrix.native }}
+        run: gh attestation verify "downloaded/$NATIVE" --repo "$GITHUB_REPOSITORY"

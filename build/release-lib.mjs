@@ -24,7 +24,9 @@ export function parseReleaseManifest(text, {
   for (const name of required) {
     if (!entries.has(name)) throw new Error(`required manifest entry missing: ${name}`);
   }
-  if (requireAll && !entries.has("heatdeath")) throw new Error("SEA entry required but missing");
+  if (requireAll && entries.size !== allowed.size) {
+    throw new Error("complete manifest must contain every allow-listed artifact");
+  }
   return entries;
 }
 
@@ -136,6 +138,29 @@ export function validateSpdxSbom(sbom, { packageJson, packageLock }) {
     }
   }
   return true;
+}
+
+export function validateReleaseProvenance(provenance, {
+  config, native, entries, packageLockSha256, commonCommit = null,
+}) {
+  if (provenance?.schemaVersion !== 1 ||
+      provenance.version !== config.version || provenance.tag !== config.tag ||
+      !/^[0-9a-f]{40}$/.test(provenance.commit ?? "") ||
+      (commonCommit !== null && provenance.commit !== commonCommit) ||
+      provenance.sourceArchive?.name !== config.sourceArchive ||
+      provenance.sourceArchive?.sha256 !== entries.get(config.sourceArchive) ||
+      provenance.sbom?.name !== config.sbom ||
+      provenance.sbom?.sha256 !== entries.get(config.sbom) ||
+      provenance.packageLockSha256 !== packageLockSha256 ||
+      provenance.node?.version !== config.nodeVersion ||
+      !/^[0-9a-f]{64}$/.test(provenance.node?.binarySha256 ?? "") ||
+      provenance.nativeArtifact?.name !== native.name ||
+      provenance.nativeArtifact?.sha256 !== entries.get(native.name) ||
+      provenance.npm !== config.npmVersion || provenance.esbuild !== config.esbuild ||
+      provenance.platform !== native.platform || provenance.arch !== native.arch) {
+    throw new Error("release metadata is incomplete or inconsistent");
+  }
+  return provenance.commit;
 }
 import { createHash, createPublicKey, verify } from "node:crypto";
 import fs from "node:fs";

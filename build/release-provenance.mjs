@@ -4,7 +4,8 @@ import path from "node:path";
 import process from "node:process";
 import { readReleaseConfig } from "./release-config.mjs";
 
-const [commit, nodeBinaryHash, sourceArchive, sourceHash, sbomName, sbomHash, npmVersion] =
+const [commit, nodeBinaryHash, nativeName, nativeHash,
+  sourceArchive, sourceHash, sbomName, sbomHash, npmVersion] =
   process.argv.slice(2);
 const root = path.resolve(import.meta.dirname, "..");
 const config = readReleaseConfig(root);
@@ -18,12 +19,13 @@ const provenance = {
   sbom: { name: sbomName, sha256: sbomHash },
   packageLockSha256: createHash("sha256").update(lock).digest("hex"),
   node: { version: process.version, binarySha256: nodeBinaryHash },
+  nativeArtifact: { name: nativeName, sha256: nativeHash },
   npm: npmVersion,
   esbuild: config.esbuild,
   platform: process.platform,
   arch: process.arch,
 };
 fs.writeFileSync(
-  path.join(root, "dist", "SOURCE-PROVENANCE.json"),
+  path.join(root, "dist", `SOURCE-PROVENANCE-${process.platform}-${process.arch}.json`),
   `${JSON.stringify(provenance, null, 2)}\n`,
 );

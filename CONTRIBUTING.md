@@ -24,6 +24,11 @@ yourself". Contributions are held to that:
 - **Do not weaken the sandbox.** `npm run prove-sandbox` must stay at 6/6 for
   every command that touches a secret. `--op-export` runs at 5/6 and is a
   separate command precisely so the boundary stays visible.
+- **Keep the offline core independent.** The bundle rooted at `generate.mjs`
+  must never import a future hosted coordinator, CRM, telemetry, licensing, or
+  enterprise entry point. `build/build.sh` enforces this boundary from esbuild's
+  complete input graph. Core commands do not phone home; network access exists
+  only in separately named operational commands and negative sandbox probes.
 - **Keep the honesty.** The documentation states where this tool loses to
   competitors and which of its own defences would not have caught a real bug.
   Do not "improve" those passages into marketing.
