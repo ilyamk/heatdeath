@@ -12,6 +12,9 @@ process.on("uncaughtException", (error) => {
 });
 
 const ROOT = path.resolve(import.meta.dirname, "..");
+if (process.env.NODE_OPTIONS?.trim()) {
+  throw new Error("unset NODE_OPTIONS before starting a verified secret-capable command");
+}
 const separator = process.argv.indexOf("--");
 if (separator === -1 || separator === process.argv.length - 1) {
   throw new Error("run-verified requires arguments after --");

@@ -4,6 +4,12 @@ import path from "node:path";
 import process from "node:process";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
+if (process.env.NODE_OPTIONS?.trim()) {
+  process.stderr.write(
+    "source runner refused: unset NODE_OPTIONS before starting a secret-capable command\n",
+  );
+  process.exit(1);
+}
 const separator = process.argv.indexOf("--");
 if (separator < 0) throw new Error("run-source requires arguments after --");
 const args = process.argv.slice(separator + 1);
