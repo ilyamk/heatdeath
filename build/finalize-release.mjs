@@ -19,12 +19,20 @@ export function finalizeRelease(directory, {
   const lines = [];
   for (const name of config.requiredArtifacts) {
     const file = path.join(resolved, name);
-    const artifact = fs.lstatSync(file);
-    if (!artifact.isFile() || artifact.isSymbolicLink()) {
-      throw new Error(`${name} must be a real file`);
+    const descriptor = fs.openSync(
+      file,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+    try {
+      const artifact = fs.fstatSync(descriptor);
+      if (!artifact.isFile()) throw new Error(`${name} must be a real file`);
+      const digest = createHash("sha256")
+        .update(fs.readFileSync(descriptor))
+        .digest("hex");
+      lines.push(`${digest}  ${name}`);
+    } finally {
+      fs.closeSync(descriptor);
     }
-    const digest = createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-    lines.push(`${digest}  ${name}`);
   }
   fs.writeFileSync(path.join(resolved, "SHA256SUMS"), `${lines.join("\n")}\n`, { flag: "wx" });
   return lines.length;

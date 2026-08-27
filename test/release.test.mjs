@@ -56,6 +56,17 @@ test("release finalization hashes every required cross-platform artifact once", 
   assert.throws(() => finalizeRelease(directory), /EEXIST/);
 });
 
+test("release finalization refuses symlink artifacts without a check-use race", (t) => {
+  const directory = fs.mkdtempSync("/tmp/heatdeath-finalize-symlink-test-");
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  for (const name of required) fs.writeFileSync(path.join(directory, name), `bytes:${name}`);
+  const symlink = path.join(directory, required[0]);
+  fs.rmSync(symlink);
+  fs.symlinkSync(path.join(directory, required[1]), symlink);
+  assert.throws(() => finalizeRelease(directory), /ELOOP|real file/);
+  assert.equal(fs.existsSync(path.join(directory, "SHA256SUMS")), false);
+});
+
 test("provenance pins native bytes, the shared commit and the exact lockfile", () => {
   const native = config.nativeArtifacts[0];
   const entries = new Map(required.map((name) => [name, hash]));
