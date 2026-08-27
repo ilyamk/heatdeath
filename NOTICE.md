@@ -75,14 +75,10 @@ AGPL-3.0 is deliberately unsuitable for shipping a closed product. If that is
 what you need, a separate commercial licence is available - it lifts the
 copyleft obligations for your use, on agreed terms.
 
-To start that conversation, open an issue on the repository titled
-`commercial licence`, or write to the address published on the repository's
-profile.
-
-> **Maintainer: fill this in before publishing.** Replace the line above with
-> a real contact route. An offer with no way to accept it is not an offer, and
-> a company that cannot reach you will either use something else or use this
-> without asking.
+Start with the public, non-sensitive form in GitHub Discussions, as described in
+`docs/en/COMMERCIAL.md`. Never post a seed, private key, share, funded address,
+balance, personal data or confidential company information. A private channel is
+established before discussing an organisation or contract.
 
 Contributions are accepted under the CLA in [CONTRIBUTING.md](CONTRIBUTING.md),
 which is what keeps this option open: without it, a single merged pull request

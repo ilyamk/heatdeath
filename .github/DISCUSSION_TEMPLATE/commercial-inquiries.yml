@@ -1,0 +1,41 @@
+title: "Commercial inquiry: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this public form only to establish contact. Never post a recovery phrase,
+        private key, wallet balance, funded address, personal data, or confidential
+        company and contract information. The maintainer will establish a private
+        channel before discussing details.
+  - type: dropdown
+    id: engagement
+    attributes:
+      label: Engagement
+      options:
+        - Safe/DAO design-partner pilot
+        - Ceremony design or training
+        - Support/SLA
+        - Commercial embedding licence
+    validations:
+      required: true
+  - type: textarea
+    id: public-summary
+    attributes:
+      label: Public, non-sensitive summary
+      description: Describe the use case without naming wallets, balances, people, or confidential systems.
+    validations:
+      required: true
+  - type: textarea
+    id: success-criterion
+    attributes:
+      label: Public pilot success criterion
+      description: What non-sensitive outcome would make a public-fixture rehearsal useful to your team?
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety acknowledgement
+      options:
+        - label: I included no seed, key, funded address, balance, personal data, or confidential information.
+          required: true

@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 
 const COMMANDS = new Map([
   ["--self-test", "self-test"],
+  ["--doctor", "doctor"],
+  ["--safe-owner", "safe-owner"],
+  ["--rehearse-safe-owner", "rehearse-safe-owner"],
   ["--wizard", "wizard"],
   ["--generate", "generate"],
   ["--verify", "verify"],

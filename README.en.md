@@ -2,8 +2,8 @@
 
 [Русская версия](README.ru.md) · [Landing page](README.md)
 
-An offline generator of recovery phrases and EVM keys that **proves** its
-properties instead of claiming them.
+An offline ceremony for EVM recovery phrases and Safe cold/recovery owners whose
+critical properties are **independently testable**.
 
 One readable 300 KB file - a built bundle with no runtime dependencies
 (the source tree has five, all by the same author). Generates a 24-word BIP-39
@@ -12,7 +12,7 @@ MetaMask, Rabby, Trust, Ledger, Rainbow — with anything that understands BIP-3
 
 ```sh
 npm ci --ignore-scripts
-npm run self-test        # 21 groups of checks, including negative ones
+npm run self-test        # 22 groups of checks, including negative ones
 npm run prove-sandbox    # the runtime denies network, process spawning and writes
 npm run generate:dice    # generation
 npm run verify           # check what you wrote down on paper
@@ -33,7 +33,7 @@ Every line below is checked by a command, not by a promise.
 | **Two independent implementations** | BIP-39, PBKDF2 and BIP-32 CKDpriv are computed twice: through `@scure` and through bare `node:crypto`. A divergence = refusal. |
 | **Sandbox at the runtime level** | `npm run prove-sandbox` → `6/6 capability probes denied`. All six: network, DNS, subprocesses, workers, disk writes and reads outside the package directory - forbidden by Node, not by the author's conscience. |
 | **Multi-source entropy** | Three OS sources plus dice, XOR of domain-separated hashes, health tests in the style of NIST SP 800-90B. |
-| **Refusal in a dangerous environment** | SSH, an attached debugger, a redirected stdout — refusal. tmux, root, a cloud-synced directory — warning. |
+| **Refusal in a dangerous environment** | SSH, an attached debugger, redirected stdin or stdout — refusal. tmux, root, a cloud-synced directory — warning. |
 | **`--verify` against transcription errors** | Expands abbreviations from 3 letters, suggests corrections by Levenshtein distance. A transcription error is the number one cause of losses. |
 | **SLIP-39 with no single point of failure** | `npm run split` → 2-of-3 shares. 45 official Trezor vectors and recovery from **every** valid subset. |
 | **Reproducible build and PQ signatures** | Two builds → one SHA-256. The manifest is signed with Ed25519, ML-DSA-87 and SLH-DSA. |
@@ -82,6 +82,8 @@ documentation assigns the same role to a second tool.
 | | |
 |---|---|
 | [QUICKSTART.en.md](QUICKSTART.en.md) | The step-by-step procedure: running from Tails and from a virtual machine, transfer through 1Password |
+| [docs/en/SAFE-OWNER.md](docs/en/SAFE-OWNER.md) | Safe/DAO cold-owner rehearsal, creation and recovery check |
+| [docs/en/COMMERCIAL.md](docs/en/COMMERCIAL.md) | Design partners, support/SLA and commercial embedding |
 | [docs/en/THREAT-MODEL.md](docs/en/THREAT-MODEL.md) | What is covered, what cannot be covered, real-world loss cases. **Also there — why neither Docker, nor a container, nor a virtual machine solves the problem** |
 | [docs/en/ENTROPY.md](docs/en/ENTROPY.md) | Entropy, the strength proof, the post-quantum section |
 | [docs/en/METAMASK.md](docs/en/METAMASK.md) | A code-level analysis of MetaMask: exactly where your wallet is weakest |
@@ -100,6 +102,9 @@ each other file for file.
 
 ```
 npm run wizard           step-by-step wizard — start here
+npm run rehearse:safe-owner  public Safe cold-owner rehearsal
+npm run doctor           inspect readiness without creating a secret
+npm run safe-owner       create one Safe cold/recovery owner
 npm run self-test        all reference and negative tests
 npm run generate         a new wallet
 npm run generate:dice    the same plus dice and screen wiping (recommended)
@@ -597,15 +602,15 @@ seen is this repository, the signature proves internal integrity and nothing mor
 artifact is the readable `.mjs`. Inside the binary the source sits in plain text
 (`strings` pulls it out), the sandbox flags can be patched, and `--prove-sandbox`
 in a patched build will print the same `6/6`. Self-attestation by an artifact the
-attacker controls proves nothing. On top of that, 144 MB **freeze Node v26.5.0**:
-every future CVE in V8 stays in the binary until it is rebuilt, whereas when you
+attacker controls proves nothing. Each native binary **freezes Node v26.7.0**:
+every future CVE in V8 stays there until it is rebuilt, whereas when you
 run from source the patches arrive through your package manager.
 
 On macOS a downloaded binary gets quarantined, and Gatekeeper kills it silently —
 exit 137, empty output:
 
 ```sh
-xattr -d com.apple.quarantine ./heatdeath
+xattr -d com.apple.quarantine ./heatdeath-darwin-arm64
 ```
 
 ---
@@ -626,7 +631,8 @@ artifact this documentation argues against in every other section.
 
 **Commercial license.** If AGPL-3.0 does not suit you — usually because you want to
 embed this in a product you do not intend to open-source — a separate commercial license
-is available. Open an issue.
+is available. Start with the public, non-sensitive contact form described in
+[docs/en/COMMERCIAL.md](docs/en/COMMERCIAL.md).
 
 All bundled third-party components are under MIT or the three-clause BSD, both
 GPL-compatible. The full list and their notices: [NOTICE.md](NOTICE.md).

@@ -8,6 +8,7 @@ const args = new Set(process.argv.slice(2));
 const repoArg = [...args].find((arg) => arg.startsWith("--repo="));
 const applySecurity = args.delete("--apply-security");
 const applyRulesets = args.delete("--apply-rulesets");
+const applyCommunity = args.delete("--apply-community");
 if (repoArg) args.delete(repoArg);
 if (args.size) throw new Error(`unknown option(s): ${[...args].join(", ")}`);
 
@@ -53,6 +54,14 @@ if (applySecurity) {
   gh("private-vulnerability-reporting", { method: "PUT" });
   gh("immutable-releases", { method: "PUT" });
   process.stdout.write("GitHub security-control update requests completed; verifying effective state.\n");
+}
+
+if (applyCommunity) {
+  gh("", { method: "PATCH", input: { has_discussions: true } });
+  process.stdout.write(
+    "GitHub Discussions enabled. Create or rename a category to `Commercial inquiries` " +
+      "in repository settings so the tracked discussion form is available there.\n",
+  );
 }
 
 const workflowPaths = [
@@ -132,6 +141,7 @@ const extendedSecretChecks = [
 ];
 process.stdout.write(`${JSON.stringify({
   repository: repo,
+  discussionsEnabled: repository.has_discussions === true,
   securityAndAnalysis: security,
   extendedSecretChecksEffective: extendedSecretChecks.every((status) => status === "enabled"),
   immutableReleases: immutable !== null,

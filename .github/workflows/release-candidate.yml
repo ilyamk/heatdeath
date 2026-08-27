@@ -11,15 +11,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  candidate:
-    name: Unsigned darwin/arm64 candidate
-    runs-on: macos-26
+  platform:
+    name: Unsigned ${{ matrix.id }} part
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: darwin-arm64
+            runner: macos-26
+            native: heatdeath-darwin-arm64
+            provenance: SOURCE-PROVENANCE-darwin-arm64.json
+          - id: linux-x64
+            runner: ubuntu-24.04
+            native: heatdeath-linux-x64
+            provenance: SOURCE-PROVENANCE-linux-x64.json
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     environment: release-candidate
     permissions:
       contents: read
-      id-token: write # mint the short-lived identity used by actions/attest
-      attestations: write # store build provenance attestations
     steps:
       - name: Checkout complete tagged history without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -31,15 +41,14 @@ jobs:
         with:
           node-version-file: .node-version-release
           package-manager-cache: false
-      - name: Verify the npm bundled with the pinned Node.js release
-        run: test "$(npm --version)" = "11.19.0"
-      - name: Verify annotated tag and GitHub signature status
+      - name: Verify exact npm and annotated signed tag
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          test "$(npm --version)" = "11.19.0"
           expected="v$(node -p 'require("./package.json").version')"
           [[ "$TAG_NAME" == "$expected" ]]
           [[ "$(git cat-file -t "refs/tags/$TAG_NAME")" == tag ]]
@@ -48,31 +57,89 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run test:contracts
       - run: npm run build:release
+      - name: Upload native release part
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: heatdeath-${{ github.ref_name }}-${{ matrix.id }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            dist/heatdeath.mjs
+            dist/${{ matrix.native }}
+            dist/heatdeath-v*-source.tar.gz
+            dist/heatdeath-v*.spdx.json
+            dist/${{ matrix.provenance }}
+            dist/BUILD-RECIPE.txt
+
+  combine:
+    name: Combine unsigned cross-platform candidate
+    needs: platform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release-candidate
+    permissions:
+      contents: read
+      id-token: write # mint the short-lived identity used by actions/attest
+      attestations: write # publish build provenance for the candidate bytes
+      artifact-metadata: write # register the attested artifact metadata record
+    steps:
+      - name: Checkout tagged source without persisted credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Use exact release Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .node-version-release
+          package-manager-cache: false
+      - name: Download darwin/arm64 part
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: heatdeath-${{ github.ref_name }}-darwin-arm64
+          path: parts/darwin-arm64
+      - name: Download linux/x64 part
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: heatdeath-${{ github.ref_name }}-linux-x64
+          path: parts/linux-x64
+      - name: Compare common bytes and assemble candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          for name in heatdeath.mjs "heatdeath-v${version}-source.tar.gz" \
+            "heatdeath-v${version}.spdx.json" BUILD-RECIPE.txt; do
+            cmp "parts/darwin-arm64/$name" "parts/linux-x64/$name"
+          done
+          mkdir candidate
+          cp parts/darwin-arm64/heatdeath.mjs candidate/
+          cp "parts/darwin-arm64/heatdeath-v${version}-source.tar.gz" candidate/
+          cp "parts/darwin-arm64/heatdeath-v${version}.spdx.json" candidate/
+          cp parts/darwin-arm64/BUILD-RECIPE.txt candidate/
+          cp parts/darwin-arm64/heatdeath-darwin-arm64 candidate/
+          cp parts/darwin-arm64/SOURCE-PROVENANCE-darwin-arm64.json candidate/
+          cp parts/linux-x64/heatdeath-linux-x64 candidate/
+          cp parts/linux-x64/SOURCE-PROVENANCE-linux-x64.json candidate/
+          chmod 0755 candidate/heatdeath-darwin-arm64 candidate/heatdeath-linux-x64
+          node build/finalize-release.mjs candidate
+          cp dist/*.pub.pem candidate/
       - name: Generate GitHub build attestations
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
-            dist/heatdeath.mjs
-            dist/heatdeath
-            dist/heatdeath-v*-source.tar.gz
-            dist/heatdeath-v*.spdx.json
-            dist/SOURCE-PROVENANCE.json
-            dist/BUILD-RECIPE.txt
-            dist/SHA256SUMS
+            candidate/heatdeath.mjs
+            candidate/heatdeath-darwin-arm64
+            candidate/heatdeath-linux-x64
+            candidate/heatdeath-v*-source.tar.gz
+            candidate/heatdeath-v*.spdx.json
+            candidate/SOURCE-PROVENANCE-*.json
+            candidate/BUILD-RECIPE.txt
+            candidate/SHA256SUMS
       - name: Upload unsigned candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: heatdeath-${{ github.ref_name }}-unsigned-candidate
           retention-days: 7
           if-no-files-found: error
-          path: |
-            dist/heatdeath.mjs
-            dist/heatdeath
-            dist/heatdeath-v*-source.tar.gz
-            dist/heatdeath-v*.spdx.json
-            dist/SOURCE-PROVENANCE.json
-            dist/BUILD-RECIPE.txt
-            dist/SHA256SUMS
-            dist/ed25519.pub.pem
-            dist/ml-dsa-87.pub.pem
-            dist/slh-dsa-sha2-128s.pub.pem
+          path: candidate

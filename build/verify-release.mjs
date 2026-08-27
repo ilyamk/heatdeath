@@ -10,6 +10,7 @@ import {
   parseReleaseManifest,
   PINNED_RELEASE_FINGERPRINTS,
   requireRealFile,
+  validateReleaseProvenance,
   validateSpdxSbom,
   verifyArtifactHashes,
   verifyManifestSignatures,
@@ -64,6 +65,8 @@ const manifest = fs.readFileSync(path.join(DIST, "SHA256SUMS"));
 const entries = parseReleaseManifest(manifest.toString("utf8"), {
   allowed: config.allowedArtifacts, required: config.requiredArtifacts, requireAll,
 });
+const packageLockBytes = fs.readFileSync(path.join(ROOT, "package-lock.json"));
+const packageLockSha256 = createHash("sha256").update(packageLockBytes).digest("hex");
 
 let failures = 0;
 const fail = (message) => { failures += 1; process.stdout.write(`  FAIL  ${message}\n`); };
@@ -79,21 +82,21 @@ for (const result of verifyManifestSignatures({
 }
 
 process.stdout.write("\n==> artifact hashes\n");
-const optional = requireAll ? new Set() : new Set(["heatdeath"]);
-for (const result of verifyArtifactHashes({ directory: DIST, entries, optional })) {
-  if (result.absent) process.stdout.write("  --    heatdeath SEA absent (optional)\n");
-  else if (result.ok) ok(result.name);
+for (const result of verifyArtifactHashes({ directory: DIST, entries })) {
+  if (result.ok) ok(result.name);
   else fail(`${result.name}: ${result.error}`);
 }
 
 try {
   const sbom = JSON.parse(fs.readFileSync(path.join(DIST, config.sbom), "utf8"));
   const packageJson = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
-  const packageLock = JSON.parse(fs.readFileSync(path.join(ROOT, "package-lock.json"), "utf8"));
+  const packageLock = JSON.parse(packageLockBytes.toString("utf8"));
   validateSpdxSbom(sbom, { packageJson, packageLock });
   if (sbom.documentNamespace !==
       `https://github.com/ilyamk/heatdeath/releases/tag/${config.tag}#spdx-${
-        JSON.parse(fs.readFileSync(path.join(DIST, "SOURCE-PROVENANCE.json"), "utf8")).commit
+        JSON.parse(fs.readFileSync(
+          path.join(DIST, config.provenanceArtifacts[0]), "utf8",
+        )).commit
       }` || sbom.creationInfo?.creators?.length !== 1 ||
       sbom.creationInfo.creators[0] !== `Tool: npm/cli-${config.npmVersion}`) {
     throw new Error("SBOM canonical provenance fields are inconsistent");
@@ -101,27 +104,17 @@ try {
   ok(`${config.sbom} SPDX semantics`);
 } catch (error) { fail(`SBOM: ${error.message}`); }
 
-try {
-  const provenance = JSON.parse(fs.readFileSync(
-    path.join(DIST, "SOURCE-PROVENANCE.json"), "utf8",
-  ));
-  if (provenance.schemaVersion !== 1 ||
-      provenance.version !== config.version || provenance.tag !== config.tag ||
-      !/^[0-9a-f]{40}$/.test(provenance.commit) ||
-      provenance.sourceArchive?.name !== config.sourceArchive ||
-      provenance.sourceArchive?.sha256 !== entries.get(config.sourceArchive) ||
-      provenance.sbom?.name !== config.sbom ||
-      provenance.sbom?.sha256 !== entries.get(config.sbom) ||
-      !/^[0-9a-f]{64}$/.test(provenance.packageLockSha256) ||
-      provenance.node?.version !== config.nodeVersion ||
-      !/^[0-9a-f]{64}$/.test(provenance.node?.binarySha256) ||
-      provenance.npm !== config.npmVersion || provenance.esbuild !== config.esbuild ||
-      provenance.platform !== "darwin" ||
-      provenance.arch !== "arm64") {
-    throw new Error("release metadata is incomplete or inconsistent");
-  }
-  ok("SOURCE-PROVENANCE.json semantics");
-} catch (error) { fail(`provenance: ${error.message}`); }
+let commonCommit = null;
+for (const native of config.nativeArtifacts) {
+  const provenanceName = `SOURCE-PROVENANCE-${native.platform}-${native.arch}.json`;
+  try {
+    const provenance = JSON.parse(fs.readFileSync(path.join(DIST, provenanceName), "utf8"));
+    commonCommit = validateReleaseProvenance(provenance, {
+      config, native, entries, packageLockSha256, commonCommit,
+    });
+    ok(`${provenanceName} semantics`);
+  } catch (error) { fail(`${provenanceName}: ${error.message}`); }
+}
 
 if (failures) {
   process.stderr.write(`\n${failures} release verification check(s) failed. DO NOT RUN.\n`);

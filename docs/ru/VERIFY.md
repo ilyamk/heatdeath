@@ -26,8 +26,9 @@
    вы читаете то, что исполняется.
 2. **Бандл** `dist/heatdeath.mjs` — 300 КБ, без зависимостей, читается
    человеком, воспроизводим побайтово.
-3. **Бинарник** `dist/heatdeath` — 144 МБ. Только удобство. Считайте
-   непроверенным, пока не воспроизвели его SHA-256 сами.
+3. **Нативные бинарники** `dist/heatdeath-darwin-arm64` и
+   `dist/heatdeath-linux-x64` — только удобство. Считайте каждый непроверенным,
+   пока самостоятельно не воспроизвели SHA-256 на указанной платформе.
 
 Чем ниже по списку, тем больше вы доверяете кому-то другому.
 
@@ -42,20 +43,19 @@
 
 ```sh
 npm run verify-release -- --trusted-keys=/absolute/independent/key-directory
-# добавьте --require-all, если скачан также SEA для darwin/arm64
 ```
 
 Проверяющий сначала валидирует все три подписи, затем разбирает `SHA256SUMS`
 строгой грамматикой. Абсолютные пути, `..`, неожиданные имена, дубликаты и
 некорректные хеши приводят к отказу. Bundle, детерминированный архив исходников,
-provenance и рецепт сборки обязательны; большой SEA опционален, если не указан
-`--require-all`.
+оба provenance records, рецепт и оба нативных артефакта обязательны.
 
 Скачивание GitHub Release не сохраняет Unix-бит исполнения SEA. Восстановите эти
 локальные метаданные только после успешной проверки:
 
 ```sh
-chmod 0755 ./dist/heatdeath
+chmod 0755 ./dist/heatdeath-darwin-arm64
+chmod 0755 ./dist/heatdeath-linux-x64
 ```
 
 Ожидаемый результат:
@@ -68,11 +68,13 @@ chmod 0755 ./dist/heatdeath
 
 ==> artifact hashes
   ok    heatdeath.mjs
-  ok    heatdeath-v2.1.0-source.tar.gz
-  ok    heatdeath-v2.1.0.spdx.json
-  ok    SOURCE-PROVENANCE.json
+  ok    heatdeath-v2.2.0-source.tar.gz
+  ok    heatdeath-v2.2.0.spdx.json
+  ok    heatdeath-darwin-arm64
+  ok    heatdeath-linux-x64
+  ok    SOURCE-PROVENANCE-darwin-arm64.json
+  ok    SOURCE-PROVENANCE-linux-x64.json
   ok    BUILD-RECIPE.txt
-  --    heatdeath SEA absent (optional)
 ```
 
 ### Что это доказывает и чего не доказывает
@@ -99,15 +101,15 @@ chmod 0755 ./dist/heatdeath
 ```sh
 npm ci --ignore-scripts
 npm run build
-# полная tagged-сборка darwin/arm64: npm run build:release
+npm run build:release
 ```
 
 Подробности и точные версии — `dist/BUILD-RECIPE.txt`.
 
 - **Бандл `.mjs` воспроизводим на любой машине** с той же версией esbuild.
   В нём нет ни абсолютных путей, ни временных меток.
-- **Бинарник воспроизводим только против той же сборки Node** (v26.7.0,
-  darwin/arm64), потому что содержит рантайм целиком.
+- **Каждый бинарник воспроизводим только против той же сборки Node** (v26.7.0)
+  на указанной платформе darwin/arm64 или linux/x64, потому что содержит рантайм целиком.
 
 Две тонкости, установленные измерением:
 
@@ -126,7 +128,7 @@ npm run build
 
 ```sh
 npm run prove-guard:verified      # подписанный bundle; только capability scope
-./dist/heatdeath --prove-guard    # из бинарника — само по себе не доказательство
+./dist/heatdeath-darwin-arm64 --prove-guard
 ```
 
 Бинарник содержит исходник **открытым текстом**: `strings` достаёт его дословно,
@@ -172,7 +174,7 @@ npm run verify
 Выглядит как «ничего не происходит».
 
 ```sh
-xattr -d com.apple.quarantine ./heatdeath
+xattr -d com.apple.quarantine ./heatdeath-darwin-arm64
 ```
 
 Мы не нотаризуем сборки: это $99/год и привязка к юридическому лицу, что

@@ -12,6 +12,7 @@
 - [Standards and specifications](#standards-and-specifications)
 - [Cryptographic primitives](#cryptographic-primitives)
 - [Keys, seeds and addresses](#keys-seeds-and-addresses)
+- [Safe and ceremony operations](#safe-and-ceremony-operations)
 - [Randomness and how it is checked](#randomness-and-how-it-is-checked)
 - [Attacks and limits](#attacks-and-limits)
 - [SLIP-39 and threshold backup](#slip-39-and-threshold-backup)
@@ -70,6 +71,19 @@
 | **xpub** | An extended public key. Under a non-hardened scheme, leaking it exposes the public keys of every address in the branch | [ENTROPY.md](ENTROPY.md) |
 | **ECDLP** | The elliptic curve discrete logarithm problem — what the key's security rests on | [ENTROPY.md](ENTROPY.md) |
 | **`ecrecover`** | The EVM operation that recovers a public key from a signature. This is why an address loses its hash barrier after its first outgoing transaction | [ENTROPY.md](ENTROPY.md) |
+
+## Safe and ceremony operations
+
+| Term | Meaning | More detail |
+|---|---|---|
+| **EOA** | Externally owned account: an EVM account controlled by a private key, as opposed to a smart contract | [SAFE-OWNER.md](SAFE-OWNER.md) |
+| **Safe owner** | An EOA authorised by a Safe smart account to approve transactions. HEATDEATH creates a key candidate; it does not inspect or change the Safe itself | [SAFE-OWNER.md](SAFE-OWNER.md) |
+| **Cold/recovery owner** | A Safe owner whose secret stays offline and is used for exceptional recovery or governance, not routine signing | [SAFE-OWNER.md](SAFE-OWNER.md) |
+| **Ceremony** | A repeatable human-and-software procedure for creating, verifying, recording, separating, and handing off a key | [SAFE-OWNER.md](SAFE-OWNER.md) |
+| **Design partner** | An early adopter who exercises a real, non-custodial workflow and provides structured feedback without exposing secrets | [COMMERCIAL.md](COMMERCIAL.md) |
+| **SLA** | A paid support commitment defining response targets and scope; it does not transfer custody or key access | [COMMERCIAL.md](COMMERCIAL.md) |
+| **Product-market fit (PMF)** | Evidence that a defined user segment repeatedly obtains enough value to adopt or pay for the product | [COMMERCIAL.md](COMMERCIAL.md) |
+| **Telemetry** | Usage data sent from software to an operator. The offline core sends none; pilot evidence is self-reported from public fixtures | [COMMERCIAL.md](COMMERCIAL.md) |
 
 ## Randomness and how it is checked
 

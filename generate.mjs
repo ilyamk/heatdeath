@@ -83,6 +83,7 @@ import {
   validateNewWalletPassphrase,
 } from "./terminal.mjs";
 import { sendSecretPayload } from "./op-transport.mjs";
+import { inspectRuntime } from "./runtime.mjs";
 
 // ---------------------------------------------------------------------------
 // CONSTANTS
@@ -95,6 +96,9 @@ const MAX_ACCOUNTS = 100;
 const DICE_MIN_ROLLS = 128; // 128 * log2(6) = 330.9 bits, margin over 256
                             // so that even a visibly imperfect die stays
                             // far above the 128-bit level that matters.
+const SAFE_OWNER_SCHEME = "metamask";
+const REHEARSAL_ENTROPY = Buffer.alloc(ENTROPY_BYTES, 0); // Public BIP-39 vector.
+const REHEARSAL_BANNER = "PUBLIC TEST DATA - NEVER FUND THIS ADDRESS";
 
 // secp256k1 group order. A BIP-32 child key must land in [1, n-1].
 const CURVE_N =
@@ -192,133 +196,18 @@ const templateFor = (scheme) => PATH_SCHEMES[scheme].template.replace("%i", "i")
 // bypass with a flag is worse than a warning they actually read.
 // ---------------------------------------------------------------------------
 
-/** Detect an inspector activated at runtime (for example via SIGUSR1). */
-function inspectorUrl() {
-  try {
-    return process.getBuiltinModule?.("node:inspector")?.url?.();
-  } catch {
-    return undefined;
-  }
-}
-
-function assertRuntime({ requireTty = true } = {}) {
-  const fatal = [];
-  const warn = [];
-
-  // --- Fatal: the secret would provably leave this machine or this process.
-
-  if (process.env.SSH_TTY || process.env.SSH_CONNECTION) {
-    fatal.push(
-      "This is an SSH session. Every character printed here crosses a network " +
-        "and lands in a remote terminal's scrollback. Run on the physical machine.",
-    );
-  }
-
-  const inspectFlags = [...process.execArgv, process.env.NODE_OPTIONS ?? ""]
-    .join(" ")
-    .match(/--inspect[\w-]*/g);
-  if (inspectFlags) {
-    fatal.push(
-      `A debugger port is enabled (${inspectFlags.join(", ")}). Anything ` +
-        "attached to it can read the seed straight out of process memory.",
-    );
-  }
-  const inspector = inspectorUrl();
-  if (inspector) fatal.push(`An inspector is already listening on ${inspector}.`);
-
-  if (requireTty && !process.stdout.isTTY) {
-    fatal.push(
-      "stdout is not a terminal. NOTE: this check is a convenience guard, not " +
-        "a security boundary - script(1), `tmux pipe-pane`, expect and terminal " +
-        "session logging all defeat it trivially. You remain responsible for " +
-        "ensuring nothing is recording this terminal.",
-    );
-  }
-
-  // --- Warnings: real risk, but the user may have a legitimate reason.
-
-  if (!process.permission) {
-    warn.push(
-      "Node's trusted-code capability guard is OFF. Network, subprocesses and file writes " +
-        "are technically possible from this process. Prefer `npm run generate`, " +
-        "which enables it.",
-    );
-  } else {
-    for (const scope of ["net", "child", "worker", "fs.write", "addon"]) {
-      if (process.permission.has(scope)) {
-        warn.push(`Permission model is enabled but "${scope}" is ALLOWED.`);
-      }
-    }
-    if (process.permission.has("fs.read", process.cwd())) {
-      warn.push(
-        "Repository-wide filesystem read is allowed. This is expected only in " +
-          "source-checkout mode; signed bundle commands need /dev/urandom only.",
-      );
-    }
-    if (!process.permission.has("fs.read", "/dev/urandom")) {
-      fatal.push("The required /dev/urandom read capability is missing.");
-    }
-  }
-
-  if (typeof process.getuid === "function" && process.getuid() === 0) {
-    warn.push("Running as root. This tool needs no privileges whatsoever.");
-  }
-
-  if (process.env.TMUX || process.env.STY) {
-    warn.push(
-      "Running inside tmux/screen. These keep large scrollback buffers and can " +
-        "be configured to log the session to disk.",
-    );
-  }
-
-  // Only meaningful when the permission model is OFF. A single-executable
-  // build made with execArgvExtension "none" cannot have flags injected
-  // through the environment at all, so warning there would be misleading.
-  if (process.env.NODE_OPTIONS && !process.permission) {
-    warn.push(
-      `NODE_OPTIONS is set ("${process.env.NODE_OPTIONS}"). It can inject code ` +
-        "via --require / --import before this file runs.",
-    );
-  }
-
-  const cwd = process.cwd();
-  for (const dir of [
-    "Library/Mobile Documents", "iCloud", "Dropbox", "Google Drive",
-    "OneDrive", "Yandex.Disk", "pCloud", "MEGA",
-  ]) {
-    if (cwd.includes(dir)) {
-      warn.push(`Working directory looks cloud-synchronised (matched "${dir}").`);
-    }
-  }
-
-  try {
-    const live = Object.entries(os.networkInterfaces())
-      .filter(([, addrs]) => (addrs ?? []).some((a) => !a.internal))
-      .map(([name]) => name);
-    if (live.length > 0) {
-      // Listed as a count plus a sample: a dozen utun* entries would push the
-      // warnings that matter off the top of the block.
-      const sample = live.slice(0, 3).join(", ");
-      warn.push(
-        `${live.length} network interface(s) are up (${sample}` +
-          `${live.length > 3 ? ", ..." : ""}). Disable Wi-Fi, Ethernet and ` +
-          "Bluetooth before generating.",
-      );
-    }
-  } catch {
-    /* os.networkInterfaces unavailable - skip. */
-  }
-
-  if (warn.length > 0) {
+function assertRuntime({ requireTty = true, requirePermission = false } = {}) {
+  const { blockers, warnings } = inspectRuntime({ requireTty, requirePermission });
+  if (warnings.length > 0) {
     process.stdout.write("\nWARNINGS\n");
-    for (const w of warn) process.stdout.write(`  ! ${w}\n`);
+    for (const row of warnings) process.stdout.write(`  ! ${row.message}\n`);
   }
-  if (fatal.length > 0) {
+  if (blockers.length > 0) {
     throw new Error(
-      `refusing to continue:\n${fatal.map((f) => `  x ${f}`).join("\n")}`,
+      `refusing to continue:\n${blockers.map((row) => `  x ${row.message}`).join("\n")}`,
     );
   }
-  return { warnings: warn };
+  return { warnings };
 }
 
 function assertWordlistIntegrity() {
@@ -1185,6 +1074,21 @@ function selfTest({ quiet = false } = {}) {
   );
   log("reference BIP-32 CKDpriv and master fingerprint agree");
 
+  // --- Public Safe owner rehearsal pin. This is deliberately distinct from
+  // the BIP-39 vector above, whose published seed uses passphrase TREZOR.
+  const rehearsalSeed = mnemonicToSeedSync(expectedPhrase, "");
+  const rehearsal = primaryAccounts(rehearsalSeed, SAFE_OWNER_SCHEME, 1);
+  assert.equal(rehearsal.fingerprint, "0x5436d724");
+  assert.equal(
+    rehearsal.accounts[0].address,
+    "0xF278cF59F82eDcf871d630F28EcC8056f25C1cdb",
+  );
+  assert.equal(rehearsal.accounts[0].path, "m/44'/60'/0'/0/0");
+  rehearsal.dispose();
+  rehearsal.accounts[0].privateKey.fill(0);
+  rehearsalSeed.fill(0);
+  log("Safe owner public rehearsal vector: fingerprint, path and address");
+
   // --- Both path schemes, full cross-check, no duplicate addresses.
   for (const scheme of Object.keys(PATH_SCHEMES)) {
     const { accounts, fingerprint, dispose } = primaryAccounts(devSeed, scheme, 5);
@@ -1614,28 +1518,37 @@ async function confirm(prompt, word) {
  * a mismatch is outstanding - a wizard that lost someone's seed to a cleared
  * screen would be worse than no wizard.
  */
-async function blindReadBack(phrase) {
+async function blindReadBack(phrase, { banner = "" } = {}) {
   const words = phrase.split(" ");
 
-  // The "written it down?" gate is asked ONCE, before the screen is cleared.
-  // After a mismatch we return straight to the typing prompt: the paper has
-  // just been corrected, and asking again whether it is written down would be
-  // both confusing and a dead end.
+  const hidePhrase = () => {
+    process.stdout.write(`${ESC}[3J${ESC}[2J${ESC}[H`);
+    process.stdout.write(
+      (banner ? `${red(banner)}\n\n` : "") +
+      `${bold("READ-BACK CHECK")}\n` +
+        "The phrase is off the screen. Type it from your PAPER - not from memory,\n" +
+        "and not by scrolling back. Input is hidden.\n" +
+        dim("(type `show` to display the phrase again)\n"),
+    );
+  };
+
+  // Every time the phrase or a correction is displayed, require an explicit
+  // paper-update confirmation and clear both screen and scrollback before the
+  // next comparison. Otherwise `show` or a mismatch would turn a nominally
+  // blind check into copying from the terminal.
   while (!(await confirm(`\n${yellow("Written it down on paper?")} Type`, "written"))) {
     process.stdout.write(dim("  Take your time. The phrase is still on screen above.\n"));
   }
-  process.stdout.write(`${ESC}[3J${ESC}[2J${ESC}[H`);
-  process.stdout.write(
-    `${bold("READ-BACK CHECK")}\n` +
-      "The phrase is off the screen. Type it from your PAPER - not from memory,\n" +
-      "and not by scrolling back. Input is hidden.\n" +
-      dim("(type `show` to display the phrase again)\n"),
-  );
+  hidePhrase();
 
   for (;;) {
     const typed = await readInput("\nphrase: ");
     if (typed.trim().toLowerCase() === "show") {
       printPhrase(phrase);
+      while (!(await confirm(`\n${yellow("Phrase copied to paper?")} Type`, "written"))) {
+        process.stdout.write(dim("  The phrase remains on screen until you confirm.\n"));
+      }
+      hidePhrase();
       continue;
     }
 
@@ -1664,8 +1577,196 @@ async function blindReadBack(phrase) {
           `   you typed: ${red(got)}\n`,
       );
     }
-    process.stdout.write(dim("\n  Correct the paper, then type it again.\n"));
+    process.stdout.write(dim("\n  Correct the paper before continuing.\n"));
+    while (!(await confirm("Paper corrected? Type", "corrected"))) {
+      process.stdout.write(dim("  The corrections remain on screen until you confirm.\n"));
+    }
+    hidePhrase();
   }
+}
+
+function deterministicRehearsalRng() {
+  let counter = 0;
+  const rng = (length) => {
+    const out = Buffer.alloc(length);
+    for (let offset = 0; offset < length; offset += 32) {
+      const ctr = Buffer.alloc(4);
+      ctr.writeUInt32BE(counter, 0);
+      counter += 1;
+      sha256(Buffer.from(`${TOOL_ID}/public-rehearsal`), ctr).copy(out, offset);
+    }
+    return out;
+  };
+  rng.dispose = () => {};
+  return rng;
+}
+
+function safeOwnerStep(number, title, rehearsal) {
+  step(number, 6, title);
+  if (rehearsal) process.stdout.write(`${red(REHEARSAL_BANNER)}\n`);
+}
+
+async function safeOwnerCeremony({ rehearsal }) {
+  safeOwnerStep(1, "Environment, role and integrity", rehearsal);
+  if (rehearsal) {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      throw new Error("the interactive rehearsal requires a terminal");
+    }
+    process.stdout.write(
+      yellow("  This rehearsal uses a public deterministic phrase. It is safe to run\n") +
+        "  while online, but every displayed word, share and address is public.\n",
+    );
+  } else {
+    assertRuntime({ requirePermission: true });
+  }
+  selfTest({ quiet: true });
+  process.stdout.write(green("  ok  ") + "known-answer vectors passed before the ceremony\n\n");
+  process.stdout.write(
+    bold("This profile creates ONE cold/recovery owner for a Safe.\n") +
+      "It is not a daily signer, does not deploy or inspect a Safe, and does not\n" +
+      "sign transactions. Importing its phrase into an online wallet ends its\n" +
+      "cold status. Every Safe owner should have an independently generated seed.\n",
+  );
+  if (!(await confirm("\nUse only as a cold/recovery owner? Type", "cold"))) {
+    throw new Error("stopped at your request - this profile is not for a daily signer");
+  }
+  if (!rehearsal) {
+    process.stdout.write(
+      "\nConfirm Wi-Fi, Ethernet and Bluetooth are off; session logging and\n" +
+        "clipboard managers are disabled; paper and pen are ready.\n",
+    );
+    if (!(await confirm("Environment ready? Type", "ready"))) {
+      throw new Error("stopped at your request - nothing was generated");
+    }
+  }
+
+  safeOwnerStep(2, "Entropy", rehearsal);
+  let dice = null;
+  let entropy = null;
+  let seed = null;
+  let bundle = null;
+  try {
+    if (rehearsal) {
+      entropy = Buffer.from(REHEARSAL_ENTROPY);
+      process.stdout.write("  Public fixture: 32 zero bytes from the official BIP-39 vector.\n");
+    } else {
+      process.stdout.write(
+        "The OS sources are sufficient. Physical dice add the only entropy source\n" +
+          "independent of this computer (128 rolls minimum).\n\n",
+      );
+      if (await confirm("Mix in physical dice? Type", "yes")) dice = await readDice();
+      const collected = collectEntropy({ dice });
+      entropy = collected.entropy;
+      for (const row of collected.report) {
+        process.stdout.write(`  ${green("ok")}  ${row.name.padEnd(16)} ${row.status}\n`);
+      }
+    }
+
+    safeOwnerStep(3, "BIP-39 passphrase", rehearsal);
+    let passphrase = "";
+    if (rehearsal) {
+      process.stdout.write(
+        "  Rehearsal passphrase is fixed to empty. Never type a real passphrase\n" +
+          "  into a rehearsal. In a real ceremony an empty passphrase is the\n" +
+          "  operationally simpler default for a team recovery key.\n",
+      );
+    } else {
+      process.stdout.write(
+        yellow("For an organisational recovery key, empty is the recommended default.\n") +
+          "A set passphrase must be backed up separately, is absent from SLIP-39\n" +
+          "shares, and permanently destroys access if forgotten.\n",
+      );
+      passphrase = await readPassphraseTwice({ newWallet: true });
+    }
+
+    safeOwnerStep(4, "Generate one owner", rehearsal);
+    const phrase = entropyToMnemonic(entropy, wordlist);
+    assert.ok(equalBytes(mnemonicToEntropy(phrase, wordlist), entropy));
+    seed = mnemonicToSeedSync(phrase, passphrase);
+    bundle = primaryAccounts(seed, SAFE_OWNER_SCHEME, 1);
+    crossCheck({
+      entropy, phrase, passphrase, seed,
+      accounts: bundle.accounts, fingerprint: bundle.fingerprint,
+    });
+    process.stdout.write(green("  ok  ") + "round-trip and independent cross-check agree\n");
+    if (rehearsal) process.stdout.write(`${red(REHEARSAL_BANNER)}\n`);
+    printPhrase(phrase);
+
+    safeOwnerStep(5, "Mandatory paper read-back", rehearsal);
+    await blindReadBack(phrase, { banner: rehearsal ? REHEARSAL_BANNER : "" });
+    process.stdout.write(
+      `\n  role:               ${bold("Safe cold/recovery owner")}\n` +
+        `  derivation path:    ${bold(pathFor(SAFE_OWNER_SCHEME, 0))}\n` +
+        `  master fingerprint: ${bold(bundle.fingerprint)}\n` +
+        `  OWNER ADDRESS:       ${bold(bundle.accounts[0].address)}\n`,
+    );
+    printAddressQRs(bundle.accounts);
+
+    safeOwnerStep(6, "Threshold backup and independent verification", rehearsal);
+    process.stdout.write(
+      "A single paper is a single point of failure. A 2-of-3 SLIP-39 backup\n" +
+        "survives one lost location. Shares contain the BIP-39 entropy, never\n" +
+        "the optional passphrase.\n\n",
+    );
+    if (await confirm("Create 2-of-3 shares? Type", "yes")) {
+      const rng = rehearsal ? deterministicRehearsalRng() : makeShamirRng();
+      try {
+        const groups = parseGroupSpec("2of3");
+        const shares = splitSecretIntoShares({
+          secret: entropy, passphrase: "", groupThreshold: 1, groups,
+          extendable: true, iterationExponent: 0, rng,
+        });
+        for (const subset of admissibleSubsets(1, groups, shares)) {
+          assert.ok(equalBytes(combineShares(subset, ""), entropy));
+        }
+        process.stdout.write(green("\n  ok  ") + "all admissible share subsets recovered the entropy\n");
+        if (rehearsal) process.stdout.write(`${red(REHEARSAL_BANNER)}\n`);
+        printShares(shares, groups, 1);
+      } finally {
+        rng.dispose();
+      }
+    } else if (!(await confirm("Accept the single-backup risk? Type", "single"))) {
+      throw new Error("backup choice not confirmed; the phrase remains on your paper");
+    }
+
+    process.stdout.write(
+      `\n${bold("CEREMONY COMPLETE.")} Before adding this owner to a Safe:\n` +
+        "  1. Shut down this session and verify from the paper in a fresh one.\n" +
+        "  2. Have a second person compare the full checksummed owner address.\n" +
+        "  3. Test the recovery procedure before the Safe holds meaningful funds.\n" +
+        "  4. Never derive another Safe owner from this same phrase.\n",
+    );
+    if (rehearsal) {
+      process.stdout.write(
+        `\n${red(REHEARSAL_BANNER)}\n` +
+          "Feedback (never include seeds, private keys, balances or confidential data):\n" +
+          "https://github.com/ilyamk/heatdeath/discussions\n",
+      );
+    }
+  } finally {
+    bundle?.dispose();
+    for (const account of bundle?.accounts ?? []) account.privateKey.fill(0);
+    seed?.fill(0);
+    entropy?.fill(0);
+    if (dice) dice.bytes.fill(0);
+    if (!rehearsal) await offerScreenWipe();
+  }
+}
+
+function doctor() {
+  const { blockers, warnings } = inspectRuntime({
+    requireTty: true,
+    requirePermission: true,
+  });
+  process.stdout.write("\nSAFE OWNER ENVIRONMENT DOCTOR\n\n");
+  if (blockers.length === 0) process.stdout.write("  ok  no blocking conditions detected\n");
+  for (const row of blockers) process.stdout.write(`  BLOCK  ${row.id}: ${row.message}\n`);
+  for (const row of warnings) process.stdout.write(`  WARN   ${row.id}: ${row.message}\n`);
+  process.stdout.write(
+    "\nDoctor creates no secret. Its checks cannot detect terminal recording, host\n" +
+      "malware, cameras or a compromised operating system.\n",
+  );
+  if (blockers.length > 0) process.exitCode = 2;
 }
 
 async function wizard(cli) {
@@ -2412,6 +2513,9 @@ const USAGE = `
 HEATDEATH - offline BIP-39 / EVM seed generator. Hardened build.
 
   node generate.mjs --wizard   [options]   guided end-to-end setup (start here)
+  node generate.mjs --doctor               inspect readiness without a secret
+  node generate.mjs --rehearse-safe-owner  public Safe cold-owner rehearsal
+  node generate.mjs --safe-owner            create one Safe cold/recovery owner
   node generate.mjs --self-test            run every known-answer and negative test
   node generate.mjs --generate [options]   create a new 24-word wallet
   node generate.mjs --verify   [options]   re-derive from a phrase you type
@@ -2473,6 +2577,12 @@ try {
     // That is what makes it usable in CI and in a `shasum` audit trail.
     assertRuntime({ requireTty: false });
     selfTest();
+  } else if (cli.command === "doctor") {
+    doctor();
+  } else if (cli.command === "rehearse-safe-owner") {
+    await safeOwnerCeremony({ rehearsal: true });
+  } else if (cli.command === "safe-owner") {
+    await safeOwnerCeremony({ rehearsal: false });
   } else if (cli.command === "wizard") {
     await wizard(cli);
   } else if (cli.command === "generate") {

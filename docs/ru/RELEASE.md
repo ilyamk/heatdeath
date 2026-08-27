@@ -1,19 +1,18 @@
 # Церемония релиза
 
-Релиз намеренно разделяет недоверенную онлайн-сборку и офлайн-подпись. GitHub
-никогда не получает production-ключи подписи.
+[← Вся документация](../../README.ru.md#документация) · [🇬🇧 English](../en/RELEASE.md)
 
-1. Merge разрешён только после успешных CI, dependency, security и
-   reproducibility checks.
-2. Создайте подписанный аннотированный тег, совпадающий с `package.json`, например
-   `v2.1.0`.
-3. Workflow `Build release candidate` собирает точные darwin/arm64 bundle, SEA,
-   `heatdeath-v2.1.0-source.tar.gz`, `heatdeath-v2.1.0.spdx.json`, provenance,
-   рецепт и манифест. Он создаёт GitHub attestations и на семь дней загружает
-   **неподписанный** кандидат.
-4. Скачайте кандидат на контролируемую релизную машину и независимо воспроизведите
-   его с Node v26.7.0 и входящим в него npm 11.19.0.
-5. Подпишите `SHA256SUMS` по одному разу каждым внешним ключом:
+Релизы разделяют сетевые нативные builders и офлайн-подписание. Production-ключи
+никогда не передаются GitHub.
+
+1. Выполняйте merge только после всех обязательных CI, security и reproducibility checks.
+2. Создайте подписанный аннотированный тег из `package.json`, например `v2.2.0`.
+3. `Build release candidate` независимо собирает части darwin/arm64 и linux/x64.
+4. Combine job требует одинаковые bundle, архив исходников, SBOM и рецепт, затем
+   создаёт один manifest для обоих бинарников и provenance records.
+5. Скачайте семидневный unsigned candidate и воспроизведите каждую нативную часть
+   на её платформе с Node v26.7.0 и npm 11.19.0.
+6. Подпишите `SHA256SUMS` каждой офлайн-идентичностью:
 
 ```sh
 npm run sign-release -- --scheme=ed25519 --key=/absolute/external/ed25519.pem
@@ -21,15 +20,17 @@ npm run sign-release -- --scheme=ml-dsa-87 --key=/absolute/external/ml-dsa.pem
 npm run sign-release -- --scheme=slh-dsa-sha2-128s --key=/absolute/external/slh-dsa.pem
 ```
 
-6. Создайте draft GitHub Release и приложите ровно файлы из allow-list. Пока не
-   публикуйте его.
-7. Вручную запустите `Verify release assets` для draft-тега. Workflow заново
-   скачивает assets, проверяет все подписи и хеши, независимо пересобирает релиз
-   на чистом macOS arm64 runner, сравнивает каждый байт, проверяет `codesign`,
-   запускает self-test и доказывает capability guard.
-8. Публикуйте только после зелёного workflow. Immutable Releases должны быть
-   включены: публикация блокирует тег и assets. Событие published повторяет
-   проверку.
+7. Создайте draft GitHub Release ровно с allow-listed assets.
+8. Пока релиз остаётся draft, запустите `Verify release assets` вручную и укажите
+   его тег. Read-only jobs на обеих платформах проверяют подписи, хеши, SBOM и
+   provenance, пересобирают свою нативную часть, сравнивают байты, запускают
+   self-test и capability probes и проверяют GitHub attestation.
+9. Публикуйте только после успеха обеих jobs. Immutable Releases должны быть включены заранее.
 
-Никогда не загружайте приватные ключи, не подписывайте в Actions, не публикуйте
-до проверки и не используйте релизный тег повторно.
+Никогда не загружайте приватные ключи, не подписывайте в Actions, не публикуйте до
+проверки и не используйте release tag повторно.
+
+---
+
+<sub>Часть **HEATDEATH**. Copyright © 2026 ILIA MAKSIMENKA. Распространяется под
+[AGPL-3.0-or-later](../../LICENSE). English version: [English](../en/RELEASE.md).</sub>

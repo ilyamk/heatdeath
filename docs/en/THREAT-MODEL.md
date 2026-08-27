@@ -44,6 +44,22 @@ by hardware, or by nothing at all.
 | **Physical security of the paper** | Theft, fire, water, a shoulder. Partly closed by a BIP-39 passphrase stored separately. |
 | **Rubber-hose attack** | No cryptography protects against it. |
 
+### Safe owner ceremony scope
+
+The Safe workflow creates and verifies one EOA intended to be a cold or recovery
+owner. It is not a Safe configuration auditor and it deliberately does not connect
+to a chain.
+
+| Boundary | Consequence |
+|---|---|
+| **No Safe inspection** | The tool does not inspect the Safe contract, modules, guards, threshold, existing owners, or deployment chain. Verify those independently in the official Safe interface and with your organisation's review procedure. |
+| **No transaction signing** | This is a key-creation and recovery ceremony, not an operational signer. It never proposes, simulates, or signs a Safe transaction. |
+| **Cold status can be lost** | Importing the phrase or private key into an online wallet, browser extension, shared workstation, or automation system ends its cold-owner status. Generate a replacement if that happens. |
+| **One seed is not owner separation** | Deriving several Safe owners from one seed creates one failure domain. Independent owners require independently generated seeds, people, devices, and storage locations. |
+| **Support cannot handle secrets** | A design-partner or SLA engagement never requires a phrase, private key, share, passphrase, funded address, or wallet balance. Support can review procedure and public test output only. |
+
+The complete operational boundary is in [SAFE-OWNER.md](SAFE-OWNER.md).
+
 ### Risks that SLIP-39 itself introduces
 
 Splitting into shares removes a single point of failure and **adds its own** — it is

@@ -16,6 +16,11 @@ test("CLI accepts exactly one scoped command", () => {
   assert.throws(() => parse(["--generate", "--verify"]), /exactly one command/);
   assert.throws(() => parse(["--verify", "--dice"]), /not valid/);
   assert.throws(() => parse(["--generate", "--dry-run"]), /not valid/);
+  assert.equal(parse(["--doctor"]).command, "doctor");
+  assert.equal(parse(["--rehearse-safe-owner"]).command, "rehearse-safe-owner");
+  assert.equal(parse(["--safe-owner"]).command, "safe-owner");
+  assert.throws(() => parse(["--safe-owner", "--accounts=2"]), /not valid/);
+  assert.throws(() => parse(["--safe-owner", "--show-private"]), /not valid/);
 });
 
 test("CLI rejects partial, duplicate and unsafe integers", () => {

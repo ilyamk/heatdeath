@@ -1,41 +1,45 @@
-# Сборка и выпуск
+# Дисциплина сборки и релиза
 
-Обычная и релизная сборки намеренно разделены.
+[← Вся документация](../../README.ru.md#документация) · [🇬🇧 English](../en/BUILD.md)
 
-`npm run build` запускает `node:test`, все внутренние known-answer-векторы,
-локальный esbuild строго версии **0.28.2** и self-test автономного bundle. Эта
-команда не создаёт SEA и не меняет provenance или подписи.
+`npm run build` — developer-сборка. Она запускает тесты и эталонные векторы,
+собирает bundle закреплённым esbuild и проверяет `dist/heatdeath.mjs`. Нативные
+бинарники, provenance и подписи не создаются.
 
-`npm run build:release` закрывается при любой неоднозначности. Нужны чистое
-рабочее дерево, аннотированный тег `v2.1.0` на `HEAD`, Node **v26.7.0** и
-**darwin/arm64**. Результат включает bundle, SEA, детерминированный архив исходников
-`heatdeath-v2.1.0-source.tar.gz` (Git archive, сжатый закреплённой сборкой
-Node/zlib с нормализованным OS-байтом RFC 1952),
-`SOURCE-PROVENANCE.json`, рецепт, `heatdeath-v2.1.0.spdx.json` в формате SPDX SBOM
-и `SHA256SUMS`. Provenance фиксирует тег, commit, хеши lockfile, исходного архива
-и SBOM, версию и хеш бинарника Node, npm 11.19.0 из Node v26.7.0, esbuild, платформу и архитектуру.
+`npm run build:release` создаёт одну нативную часть релиза `v2.2.0`. Требуются:
 
-Релизная сборка ничего не подписывает автоматически. Каждая схема вызывается
-отдельно:
+- чистое рабочее дерево и аннотированный тег `v2.2.0`, указывающий на `HEAD`;
+- Node v26.7.0, npm 11.19.0 и esbuild 0.28.2;
+- либо darwin/arm64, либо linux/x64.
+
+Каждая платформа создаёт одинаковые bundle, детерминированный
+`heatdeath-v2.2.0-source.tar.gz`, SPDX `heatdeath-v2.2.0.spdx.json` и рецепт,
+а также собственные SEA и provenance:
+
+- `heatdeath-darwin-arm64` и `SOURCE-PROVENANCE-darwin-arm64.json`;
+- `heatdeath-linux-x64` и `SOURCE-PROVENANCE-linux-x64.json`.
+
+CI сравнивает общие байты, объединяет обе нативные части и создаёт финальный manifest:
 
 ```sh
-npm run sign-release -- --scheme=ed25519 --key=/absolute/external/ed25519.pem
-npm run sign-release -- --scheme=ml-dsa-87 --key=/absolute/external/ml-dsa.pem
-npm run sign-release -- --scheme=slh-dsa-sha2-128s --key=/absolute/external/slh-dsa.pem
+node build/finalize-release.mjs candidate
 ```
 
-Приватный ключ обязан находиться вне репозитория, не быть symlink и иметь права
-0600 или строже. Производный публичный fingerprint должен совпасть с уже
-зафиксированной релизной идентичностью. Отсутствующий ключ — ошибка: подпись больше
-никогда не создаёт и не ротирует ключи как побочный эффект. Новая идентичность
-создаётся только явно названной командой `init-signing-key` и публикуется через
-независимый канал.
+Из общего SPDX удаляются только опциональные нативные helper-пакеты, выбранные
+хостом (например, `@esbuild/darwin-arm64` вместо `@esbuild/linux-x64`), и их
+relationships. Логический пакет `esbuild` остаётся. Хеш полного lockfile и
+provenance каждой платформы сохраняют данные о builder, а product SBOM остаётся
+побайтово одинаковым на обеих платформах.
 
-SEA использует `execArgvExtension: "none"` и разрешает чтение только
-`/dev/urandom`. Шесть проб проверяют least privilege для доверенного кода. Node
-Permission Model — capability guard, а не песочница от вредоносного кода. Доверие
-к коду дают аудит, воспроизводимость, provenance и независимо закреплённые ключи.
+Только этот полный manifest подписывается офлайн. Каждый provenance закрепляет
+тег, commit, хеши исходников и SBOM, lockfile, бинарник Node, npm, esbuild, хеш
+нативного артефакта, платформу и архитектуру.
 
-Тег и публикация остаются отдельным ручным шагом после независимого review.
-Полная последовательность candidate, offline signing, draft verification и
-immutable release описана в [RELEASE.md](RELEASE.md).
+SEA содержит точный рантайм Node, использует `execArgvExtension: "none"` и получает
+только чтение `/dev/urandom`. Это артефакт для удобства; основной объект аудита —
+читаемый кроссплатформенный bundle `.mjs`.
+
+---
+
+<sub>Часть **HEATDEATH**. Copyright © 2026 ILIA MAKSIMENKA. Распространяется под
+[AGPL-3.0-or-later](../../LICENSE). English version: [English](../en/BUILD.md).</sub>

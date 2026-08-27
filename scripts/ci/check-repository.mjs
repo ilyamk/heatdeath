@@ -22,7 +22,8 @@ for (const section of ["dependencies", "devDependencies"]) {
 }
 
 const checkoutCommands = [
-  "self-test", "wizard", "generate", "generate:dice", "generate:account",
+  "self-test", "doctor", "rehearse:safe-owner", "safe-owner",
+  "wizard", "generate", "generate:dice", "generate:account",
   "generate:private", "verify", "verify:account", "split", "combine",
   "op-export", "op-export:dry", "prove-guard",
 ];
@@ -31,6 +32,13 @@ for (const command of checkoutCommands) {
     `${command} must remain usable from an unsigned source checkout`);
   assert.match(pkg.scripts?.[`${command}:verified`] ?? "", /build\/run-verified\.mjs/,
     `${command}:verified must enforce signed release preflight`);
+}
+for (const launcher of ["build/run-source.mjs", "build/run-verified.mjs"]) {
+  assert.match(
+    fs.readFileSync(path.join(ROOT, launcher), "utf8"),
+    /NODE_OPTIONS[\s\S]*?(?:refused|unset NODE_OPTIONS)/,
+    `${launcher} must refuse ambient Node option injection before handling secrets`,
+  );
 }
 
 const files = execFileSync(
@@ -97,6 +105,13 @@ assert.doesNotMatch(reproducibleWorkflow, /^\s+paths:/m,
 
 const releaseVerifyWorkflow = fs.readFileSync(
   path.join(workflowDirectory, "release-verify.yml"), "utf8");
+const releaseCandidateWorkflow = fs.readFileSync(
+  path.join(workflowDirectory, "release-candidate.yml"), "utf8");
+assert.match(
+  releaseCandidateWorkflow,
+  /combine:[\s\S]*?permissions:[\s\S]*?id-token: write[\s\S]*?attestations: write[\s\S]*?artifact-metadata: write/,
+  "release attestation job must hold every permission required by actions/attest",
+);
 assert.doesNotMatch(releaseVerifyWorkflow, /\bgh release download\b/,
   "draft assets cannot be resolved through the public release-by-tag endpoint");
 assert.match(
@@ -109,8 +124,8 @@ assert.match(
   /permissions: \{\}[\s\S]*?fetch:[\s\S]*?permissions:\n\s+contents: write[\s\S]*?verify:[\s\S]*?permissions:\n\s+contents: read/,
   "draft write access must be isolated from the read-only verification job",
 );
-assert.match(releaseVerifyWorkflow, /chmod 0755 downloaded\/heatdeath/,
-  "release transport must restore the verified SEA executable mode");
+assert.match(releaseVerifyWorkflow, /chmod 0755 "downloaded\/\$NATIVE"/,
+  "release transport must restore each verified SEA executable mode");
 
 const trackedKeys = files.filter((name) =>
   /(?:^|\/)(?:keys?|secrets?)(?:\/|$)/i.test(name) && !/\.pub\.pem$/.test(name));
