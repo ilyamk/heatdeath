@@ -79,9 +79,9 @@ jobs:
     environment: release-candidate
     permissions:
       contents: read
-      id-token: write
-      attestations: write
-      artifact-metadata: write
+      id-token: write # mint the short-lived identity used by actions/attest
+      attestations: write # publish build provenance for the candidate bytes
+      artifact-metadata: write # register the attested artifact metadata record
     steps:
       - name: Checkout tagged source without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

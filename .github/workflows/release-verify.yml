@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 10
     environment: release-verification
     permissions:
-      contents: write
+      contents: write # GitHub requires write access to fetch assets from a draft release
     outputs:
       tag: ${{ steps.release.outputs.tag }}
     steps:
