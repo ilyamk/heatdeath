@@ -10,6 +10,8 @@ function fakeRuntime(overrides = {}) {
   return {
     env: {},
     execArgv: [],
+    version: "v26.8.1",
+    allowedNodeEnvironmentFlags: new Set(["--allow-net"]),
     stdin: { isTTY: true },
     stdout: { isTTY: true },
     cwd: () => "/offline/heatdeath",
@@ -96,6 +98,66 @@ test("strict inspection covers Node 26 native escape capabilities", () => {
     assert.ok(inspectRuntime({
       runtime, requirePermission: true, networkInterfaces: () => ({}),
     }).blockers.some(({ id }) => id === `permission-${scope}`));
+  }
+});
+
+test("a Node without a network permission scope cannot pass as a full guard", () => {
+  const runtime = fakeRuntime({
+    version: "v24.14.0",
+    allowedNodeEnvironmentFlags: new Set(["--allow-addons"]),
+  });
+  const relaxed = inspectRuntime({
+    runtime, requirePermission: false, networkInterfaces: () => ({}),
+  });
+  assert.ok(relaxed.warnings.some(({ id }) => id === "permission-net-unsupported"));
+  const strict = inspectRuntime({
+    runtime, requirePermission: true, networkInterfaces: () => ({}),
+  });
+  const blocker = strict.blockers.find(({ id }) => id === "permission-net-unsupported");
+  assert.ok(blocker);
+  assert.match(blocker.message, /v24\.14\.0/);
+  assert.match(blocker.message, /--allow-net/);
+});
+
+test("memory-dumping and code-preloading flags block regardless of strictness", () => {
+  for (const flag of [
+    "--heapsnapshot-signal=SIGUSR2", "--heap-prof", "--cpu-prof",
+    "--report-on-signal", "--import=./hook.mjs", "-r", "--env-file=.env",
+  ]) {
+    const result = inspectRuntime({
+      runtime: fakeRuntime({ execArgv: ["--permission", flag] }),
+      requirePermission: false,
+      networkInterfaces: () => ({}),
+    });
+    const blocker = result.blockers.find(({ id }) => id === "diagnostic-flags");
+    assert.ok(blocker, `${flag} must be a blocker`);
+    assert.ok(blocker.message.includes(flag));
+  }
+  const clean = inspectRuntime({
+    runtime: fakeRuntime({ execArgv: ["--permission", "--allow-fs-read=/dev/urandom"] }),
+    networkInterfaces: () => ({}),
+  });
+  assert.equal(clean.blockers.some(({ id }) => id === "diagnostic-flags"), false);
+});
+
+test("prove-guard counts only ERR_ACCESS_DENIED as a denial", () => {
+  const root = path.resolve(import.meta.dirname, "..");
+  const result = spawnSync(
+    process.execPath,
+    ["--permission", "--allow-fs-read=.", "--allow-fs-read=/dev/urandom",
+      "generate.mjs", "--prove-guard"],
+    { cwd: root, encoding: "utf8" },
+  );
+  assert.doesNotMatch(result.stdout, /\bblocked\b/);
+  if (process.allowedNodeEnvironmentFlags.has("--allow-net")) {
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /6\/6 capability probes denied/);
+    assert.doesNotMatch(result.stdout, /NOT ENFORCED/);
+  } else {
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /no network permission scope/);
+    assert.match(result.stdout, /NOT ENFORCED|ALLOWED/);
+    assert.doesNotMatch(result.stdout, /6\/6 capability probes denied/);
   }
 });
 

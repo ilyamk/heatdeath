@@ -16,6 +16,7 @@ const CLI_DEFAULTS = {
 const COMMANDS = new Set([
   "help", "generate", "verify", "combine", "split", "op-export",
   "wizard", "self-test", "prove-guard", "license",
+  "doctor", "safe-owner", "rehearse-safe-owner",
 ]);
 
 test("fast-check fuzzes CLI and terminal parsers without escaping their invariants", () => {

@@ -21,10 +21,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 24.8 is the real minimum: SLH-DSA landed after Node 24.0.
-        # Floating majors validate current supported patches; release builds
-        # use the separately pinned exact runtime.
-        node: [24.8.0, 24, 25, 26]
+        # 26.0.0 is the floor: the Permission Model's network scope
+        # (--allow-net) exists from Node 25.0.0, and without it the guard
+        # cannot deny network or DNS access; Node 25 is end-of-life. The
+        # floating major validates the current patch; release builds use the
+        # separately pinned exact runtime.
+        node: [26.0.0, 26]
     steps:
       - name: Checkout without persisted credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,6 +45,8 @@ jobs:
         run: npm test
       - name: Checkout-command known-answer tests
         run: npm run self-test
+      - name: Prove the capability guard denies all six probes on this runtime
+        run: npm run prove-guard
       - name: Build and self-test standalone bundle
         run: npm run build
 

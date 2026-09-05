@@ -69,8 +69,8 @@ Expected:
 
 ==> artifact hashes
   ok    heatdeath.mjs
-  ok    heatdeath-v2.2.0-source.tar.gz
-  ok    heatdeath-v2.2.0.spdx.json
+  ok    heatdeath-v2.3.0-source.tar.gz
+  ok    heatdeath-v2.3.0.spdx.json
   ok    heatdeath-darwin-arm64
   ok    heatdeath-linux-x64
   ok    SOURCE-PROVENANCE-darwin-arm64.json

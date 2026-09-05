@@ -23,6 +23,18 @@ test("CLI accepts exactly one scoped command", () => {
   assert.throws(() => parse(["--safe-owner", "--show-private"]), /not valid/);
 });
 
+test("every flag the wizard accepts is one it honours", () => {
+  const wizard = parse([
+    "--wizard", "--dice", "--shares=3of5", "--group-threshold=1", "--show-public",
+  ]);
+  assert.equal(wizard.useDice, true);
+  assert.equal(wizard.shareSpec, "3of5");
+  assert.equal(wizard.showPublic, true);
+  // The wizard always offers a screen wipe; a flag it would ignore is rejected.
+  assert.throws(() => parse(["--wizard", "--wipe-screen"]), /not valid/);
+  assert.equal(parse(["--generate", "--wipe-screen"]).wipe, true);
+});
+
 test("CLI rejects partial, duplicate and unsafe integers", () => {
   for (const bad of ["1junk", "1.5", "+1", "01", "9007199254740992"]) {
     assert.throws(() => parse(["--generate", `--accounts=${bad}`]));

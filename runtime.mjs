@@ -14,6 +14,34 @@ const FORBIDDEN_PERMISSION_SCOPES = Object.freeze([
   "net", "child", "worker", "fs.write", "addon", "ffi", "inspector", "wasi",
 ]);
 
+// Flags that copy process memory to disk or run code before this file does.
+// A heap snapshot or heap profile contains every live string, the mnemonic
+// included; a preloaded module observes everything this process does. The
+// launchers never pass these, so their presence means a hand-built command.
+const FORBIDDEN_EXEC_ARGV = Object.freeze([
+  "--heapsnapshot-signal", "--heapsnapshot-near-heap-limit", "--heap-prof",
+  "--cpu-prof", "--prof", "--diagnostic-dir",
+  "--report-on-signal", "--report-on-fatalerror", "--report-uncaught-exception",
+  "--require", "-r", "--import", "--loader", "--experimental-loader",
+  "--env-file", "--env-file-if-exists",
+]);
+
+function forbiddenExecArgv(execArgv) {
+  return execArgv.filter((argument) =>
+    FORBIDDEN_EXEC_ARGV.some((flag) => argument === flag || argument.startsWith(`${flag}=`)));
+}
+
+/**
+ * Whether this Node build has a network permission scope at all. The
+ * Permission Model gained `--allow-net` in Node 25.0.0; before that, network
+ * and DNS access cannot be denied by it, and `process.permission.has("net")`
+ * merely returns false for a scope the runtime does not know. Feature-detect
+ * rather than compare versions so a backport is recognised for what it does.
+ */
+export function supportsNetworkPermission(runtime = process) {
+  return Boolean(runtime.allowedNodeEnvironmentFlags?.has("--allow-net"));
+}
+
 function permissionFlagConcerns(runtime) {
   const concerns = [];
   const allowedReads = new Set([".", runtime.cwd(), "/dev/urandom"]);
@@ -73,6 +101,15 @@ export function inspectRuntime({
   if (inspector) {
     blockers.push({ id: "inspector", message: `An inspector is already listening on ${inspector}.` });
   }
+  const dumpFlags = forbiddenExecArgv(runtime.execArgv ?? []);
+  if (dumpFlags.length > 0) {
+    blockers.push({
+      id: "diagnostic-flags",
+      message: `Node was started with ${dumpFlags.join(", ")}. Such flags write process ` +
+        "memory to disk or run code before this file - a heap snapshot contains the seed. " +
+        "Start through the provided launchers, which pass none of them.",
+    });
+  }
 
   if (requireTty && !runtime.stdout.isTTY) {
     blockers.push({
@@ -100,6 +137,15 @@ export function inspectRuntime({
     };
     (requirePermission ? blockers : warnings).push(row);
   } else {
+    if (!supportsNetworkPermission(runtime)) {
+      const row = {
+        id: "permission-net-unsupported",
+        message: `This Node (${runtime.version ?? "unknown version"}) has no network ` +
+          "permission scope, so the capability guard cannot deny network or DNS access " +
+          "from this process. Node 25 introduced --allow-net; use Node 26 LTS.",
+      };
+      (requirePermission ? blockers : warnings).push(row);
+    }
     for (const scope of FORBIDDEN_PERMISSION_SCOPES) {
       if (runtime.permission.has(scope)) {
         const row = { id: `permission-${scope}`, message: `Permission "${scope}" is ALLOWED.` };

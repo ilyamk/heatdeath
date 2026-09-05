@@ -68,7 +68,7 @@ const workflowPaths = [
   "ci.yml", "dependency-review.yml", "security-analysis.yml", "reproducible-build.yml",
 ];
 const statusChecks = [
-  "Node 24.8.0", "Node 24", "Node 25", "Node 26",
+  "Node 26.0.0", "Node 26",
   "Repository and documentation contracts",
   "Independent EVM, QR and SLIP-39 oracles",
   "macOS arm64 release-runtime smoke test",

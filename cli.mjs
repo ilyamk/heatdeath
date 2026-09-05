@@ -20,7 +20,9 @@ const BOOLEAN_SCOPES = new Map([
   ["--dice", new Set(["wizard", "generate"])],
   ["--show-public", new Set(["wizard", "generate", "verify", "combine"])],
   ["--show-private", new Set(["wizard", "generate", "verify", "combine"])],
-  ["--wipe-screen", new Set(["wizard", "generate"])],
+  // The wizard always offers a screen wipe, so the flag is meaningless there
+  // and is rejected rather than silently accepted.
+  ["--wipe-screen", new Set(["generate"])],
   ["--dry-run", new Set(["op-export"])],
   ["--qr", new Set(["wizard", "generate", "verify", "combine"])],
 ]);

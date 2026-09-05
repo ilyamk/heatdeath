@@ -13,6 +13,14 @@ if (process.env.NODE_OPTIONS?.trim()) {
 const separator = process.argv.indexOf("--");
 if (separator < 0) throw new Error("run-source requires arguments after --");
 const args = process.argv.slice(separator + 1);
+// Imported only after the NODE_OPTIONS refusal above: an inherited
+// --permission would otherwise deny reading this very module first.
+const { launcherRefusal } = await import("./launcher-guard.mjs");
+const refusal = launcherRefusal(args, process);
+if (refusal) {
+  process.stderr.write(`source runner refused: ${refusal}\n`);
+  process.exit(1);
+}
 process.stderr.write(
   "WARNING: source-checkout mode is not release-signature verified and grants\n" +
     "read access to the repository for ESM dependencies. Audit this tree first.\n",
