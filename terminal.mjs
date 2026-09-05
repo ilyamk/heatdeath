@@ -8,12 +8,15 @@ const EOT = "\u0004";
 export const ESC = "\u001b";
 const BS = "\u0008";
 const DEL = "\u007f";
+const NAK = "\u0015"; // Ctrl+U: discard the whole line, as in every shell
 const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 function dropLastGrapheme(value) {
   const segments = [...segmenter.segment(value)];
   return segments.length === 0 ? value : value.slice(0, segments.at(-1).index);
 }
+
+const graphemeCount = (value) => [...segmenter.segment(value)].length;
 
 export class TerminalInputDecoder {
   #value = "";
@@ -85,6 +88,14 @@ export class TerminalInputDecoder {
           this.#value = next;
           erased += 1;
         }
+        continue;
+      }
+      // Hidden input gives no feedback, so a suspected typo deep in a
+      // passphrase would otherwise mean backspacing blind, one character at
+      // a time. Ctrl+U starts the line over, exactly as a shell would.
+      if (ch === NAK && !this.#paste) {
+        erased += graphemeCount(this.#value);
+        this.#value = "";
         continue;
       }
       if (ch < " " && !this.#paste) continue;
@@ -161,6 +172,38 @@ export function validateNewWalletPassphrase(value) {
       "new-wallet passphrases must contain printable ASCII only (space through ~)",
     );
   }
+  // Input is hidden, so a leading or trailing space is invisible to the
+  // person typing it - and a wallet restored without it is a different,
+  // empty wallet. Refuse rather than warn: nothing legitimate needs one.
+  if (value !== value.trim()) {
+    throw new Error(
+      "new-wallet passphrases must not start or end with a space: hidden input " +
+        "cannot show it, and restoring without it opens a different, empty wallet",
+    );
+  }
+}
+
+/**
+ * Structural warnings about a passphrase that is valid but easy to get wrong
+ * later. Runs of spaces are the hidden-input hazard: "a  b" and "a b" are
+ * different wallets and look identical on paper.
+ */
+export function passphraseCautions(value) {
+  const cautions = [];
+  if (/ {2,}/.test(value)) {
+    cautions.push(
+      "It contains two or more consecutive spaces. They count, and they are " +
+        "invisible on paper; a single space between words is far safer.",
+    );
+  }
+  if (looksObviouslyWeakPassphrase(value)) {
+    cautions.push(
+      "It has an obvious weak structure or is short. Software cannot infer how " +
+        "randomly a passphrase was chosen, so no honest entropy figure can be given; " +
+        "use independently sampled Diceware words or random characters.",
+    );
+  }
+  return cautions;
 }
 
 export function looksObviouslyWeakPassphrase(value) {

@@ -7875,7 +7875,9 @@ var BOOLEAN_SCOPES = /* @__PURE__ */ new Map([
   ["--dice", /* @__PURE__ */ new Set(["wizard", "generate"])],
   ["--show-public", /* @__PURE__ */ new Set(["wizard", "generate", "verify", "combine"])],
   ["--show-private", /* @__PURE__ */ new Set(["wizard", "generate", "verify", "combine"])],
-  ["--wipe-screen", /* @__PURE__ */ new Set(["wizard", "generate"])],
+  // The wizard always offers a screen wipe, so the flag is meaningless there
+  // and is rejected rather than silently accepted.
+  ["--wipe-screen", /* @__PURE__ */ new Set(["generate"])],
   ["--dry-run", /* @__PURE__ */ new Set(["op-export"])],
   ["--qr", /* @__PURE__ */ new Set(["wizard", "generate", "verify", "combine"])]
 ]);
@@ -7980,11 +7982,13 @@ var EOT = "";
 var ESC = "\x1B";
 var BS = "\b";
 var DEL = "\x7F";
+var NAK = "";
 var segmenter = new Intl.Segmenter(void 0, { granularity: "grapheme" });
 function dropLastGrapheme(value) {
   const segments = [...segmenter.segment(value)];
   return segments.length === 0 ? value : value.slice(0, segments.at(-1).index);
 }
+var graphemeCount = (value) => [...segmenter.segment(value)].length;
 var TerminalInputDecoder = class {
   #value = "";
   #escape = "";
@@ -8047,6 +8051,11 @@ var TerminalInputDecoder = class {
           this.#value = next;
           erased += 1;
         }
+        continue;
+      }
+      if (ch === NAK && !this.#paste) {
+        erased += graphemeCount(this.#value);
+        this.#value = "";
         continue;
       }
       if (ch < " " && !this.#paste) continue;
@@ -8126,6 +8135,25 @@ function validateNewWalletPassphrase(value) {
       "new-wallet passphrases must contain printable ASCII only (space through ~)"
     );
   }
+  if (value !== value.trim()) {
+    throw new Error(
+      "new-wallet passphrases must not start or end with a space: hidden input cannot show it, and restoring without it opens a different, empty wallet"
+    );
+  }
+}
+function passphraseCautions(value) {
+  const cautions = [];
+  if (/ {2,}/.test(value)) {
+    cautions.push(
+      "It contains two or more consecutive spaces. They count, and they are invisible on paper; a single space between words is far safer."
+    );
+  }
+  if (looksObviouslyWeakPassphrase(value)) {
+    cautions.push(
+      "It has an obvious weak structure or is short. Software cannot infer how randomly a passphrase was chosen, so no honest entropy figure can be given; use independently sampled Diceware words or random characters."
+    );
+  }
+  return cautions;
 }
 function looksObviouslyWeakPassphrase(value) {
   if (value.length < 16) return true;
@@ -8193,6 +8221,30 @@ var FORBIDDEN_PERMISSION_SCOPES = Object.freeze([
   "inspector",
   "wasi"
 ]);
+var FORBIDDEN_EXEC_ARGV = Object.freeze([
+  "--heapsnapshot-signal",
+  "--heapsnapshot-near-heap-limit",
+  "--heap-prof",
+  "--cpu-prof",
+  "--prof",
+  "--diagnostic-dir",
+  "--report-on-signal",
+  "--report-on-fatalerror",
+  "--report-uncaught-exception",
+  "--require",
+  "-r",
+  "--import",
+  "--loader",
+  "--experimental-loader",
+  "--env-file",
+  "--env-file-if-exists"
+]);
+function forbiddenExecArgv(execArgv) {
+  return execArgv.filter((argument) => FORBIDDEN_EXEC_ARGV.some((flag) => argument === flag || argument.startsWith(`${flag}=`)));
+}
+function supportsNetworkPermission(runtime = process2) {
+  return Boolean(runtime.allowedNodeEnvironmentFlags?.has("--allow-net"));
+}
 function permissionFlagConcerns(runtime) {
   const concerns = [];
   const allowedReads = /* @__PURE__ */ new Set([".", runtime.cwd(), "/dev/urandom"]);
@@ -8240,6 +8292,13 @@ function inspectRuntime({
   if (inspector) {
     blockers.push({ id: "inspector", message: `An inspector is already listening on ${inspector}.` });
   }
+  const dumpFlags = forbiddenExecArgv(runtime.execArgv ?? []);
+  if (dumpFlags.length > 0) {
+    blockers.push({
+      id: "diagnostic-flags",
+      message: `Node was started with ${dumpFlags.join(", ")}. Such flags write process memory to disk or run code before this file - a heap snapshot contains the seed. Start through the provided launchers, which pass none of them.`
+    });
+  }
   if (requireTty && !runtime.stdout.isTTY) {
     blockers.push({
       id: "stdout-tty",
@@ -8259,6 +8318,13 @@ function inspectRuntime({
     };
     (requirePermission ? blockers : warnings).push(row);
   } else {
+    if (!supportsNetworkPermission(runtime)) {
+      const row = {
+        id: "permission-net-unsupported",
+        message: `This Node (${runtime.version ?? "unknown version"}) has no network permission scope, so the capability guard cannot deny network or DNS access from this process. Node 25 introduced --allow-net; use Node 26 LTS.`
+      };
+      (requirePermission ? blockers : warnings).push(row);
+    }
     for (const scope of FORBIDDEN_PERMISSION_SCOPES) {
       if (runtime.permission.has(scope)) {
         const row = { id: `permission-${scope}`, message: `Permission "${scope}" is ALLOWED.` };
@@ -8341,6 +8407,7 @@ var DEFAULT_ACCOUNTS = 11;
 var MAX_ACCOUNTS = 100;
 var DICE_MIN_ROLLS = 128;
 var SAFE_OWNER_SCHEME = "metamask";
+var PASSPHRASE_ATTEMPTS = 5;
 var REHEARSAL_ENTROPY = Buffer.alloc(ENTROPY_BYTES, 0);
 var REHEARSAL_BANNER = "PUBLIC TEST DATA - NEVER FUND THIS ADDRESS";
 var CURVE_N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
@@ -8730,9 +8797,36 @@ BIP-39 passphrase (the "25th word").
 
 `
   );
+  for (let failures = 0; ; ) {
+    const outcome = await readPassphraseOnce({ newWallet });
+    if (outcome.ok) return outcome.passphrase;
+    if (!outcome.voluntary) {
+      failures += 1;
+      if (failures >= PASSPHRASE_ATTEMPTS) {
+        throw new Error(
+          `passphrase not confirmed after ${PASSPHRASE_ATTEMPTS} attempts - nothing was generated`
+        );
+      }
+    }
+    process3.stdout.write(
+      `
+  ! ${outcome.reason}
+  ! Enter the passphrase again (Ctrl+U clears the line). Nothing
+  ! collected so far is lost.
+
+`
+    );
+  }
+}
+async function readPassphraseOnce({ newWallet }) {
   const firstRaw = await readInput("passphrase: ");
-  if (newWallet) validateNewWalletPassphrase(firstRaw);
-  else if (/[^\x20-\x7e]/.test(firstRaw)) {
+  if (newWallet) {
+    try {
+      validateNewWalletPassphrase(firstRaw);
+    } catch (error) {
+      return { ok: false, reason: error.message };
+    }
+  } else if (/[^\x20-\x7e]/.test(firstRaw)) {
     process3.stdout.write(
       "\n  ! Unicode recovery mode: the text will be normalized with NFKD.\n  ! Confirm the resulting wallet fingerprint against your record.\n"
     );
@@ -8740,19 +8834,29 @@ BIP-39 passphrase (the "25th word").
   const first = normalizePassphrase(firstRaw);
   if (first === "") {
     process3.stdout.write("Using an EMPTY passphrase (standard wallet).\n");
-    return "";
+    return { ok: true, passphrase: "" };
   }
   const secondRaw = await readInput("repeat:     ");
-  if (newWallet) validateNewWalletPassphrase(secondRaw);
-  const second = normalizePassphrase(secondRaw);
-  assert4.equal(first, second, "Passphrases do not match - nothing was generated");
-  process3.stdout.write("\nPassphrase accepted and confirmed.\n");
-  if (looksObviouslyWeakPassphrase(first)) {
-    process3.stdout.write(
-      "\n  ! This passphrase has an obvious weak structure or is short.\n  ! Software cannot infer how randomly a passphrase was selected and\n  ! therefore cannot assign it honest entropy or cracking-time numbers.\n  ! Use independently sampled Diceware words/random characters, or use\n  ! no passphrase. Ctrl+C now to reconsider.\n"
-    );
+  if (normalizePassphrase(secondRaw) !== first) {
+    return { ok: false, reason: "Passphrases do not match." };
   }
-  return first;
+  process3.stdout.write("\nPassphrase accepted and confirmed.\n");
+  const cautions = passphraseCautions(first);
+  if (cautions.length > 0) {
+    process3.stdout.write("\n");
+    for (const caution of cautions) process3.stdout.write(`  ! ${caution}
+`);
+    if (newWallet) {
+      const answer = await readInput(
+        '\n  Type "keep" to use it anyway, or press Enter to choose another: ',
+        { echo: true }
+      );
+      if (answer.trim().toLowerCase() !== "keep") {
+        return { ok: false, voluntary: true, reason: "Choose a different passphrase." };
+      }
+    }
+  }
+  return { ok: true, passphrase: first };
 }
 async function readDice() {
   const bits = (n) => (n * Math.log2(6)).toFixed(1);
@@ -8770,10 +8874,18 @@ Dice entropy. You need at least ${DICE_MIN_ROLLS} d6 rolls (= ${bits(DICE_MIN_RO
       process3.stdout.write("  Cancelled - continuing without dice.\n");
       return null;
     }
-    const batch = [...raw].filter((c) => c >= "1" && c <= "6").map(Number);
-    const ignored = [...raw].filter((c) => !/[1-6\s,.-]/.test(c)).length;
-    if (ignored > 0) {
-      process3.stdout.write(`  ! ${ignored} character(s) outside 1-6 were ignored.
+    const chars = [...raw];
+    const batch = chars.filter((c) => c >= "1" && c <= "6").map(Number);
+    const wrongDigits = chars.filter((c) => /[0789]/.test(c)).length;
+    const other = chars.filter((c) => !/[0-9\s,.-]/.test(c)).length;
+    if (wrongDigits > 0) {
+      process3.stdout.write(
+        `  ! ${wrongDigits} digit(s) outside 1-6 (0, 7, 8 or 9) were ignored - a d6 cannot roll them. Check the line for a typo before continuing.
+`
+      );
+    }
+    if (other > 0) {
+      process3.stdout.write(`  ! ${other} non-digit character(s) were ignored.
 `);
     }
     if (batch.length === 0) {
@@ -8931,6 +9043,42 @@ function printShares(groupsOfShares, groups, groupThreshold) {
   });
   process3.stdout.write(
     "\n  Store each share in a DIFFERENT physical place. Two shares in one\n  drawer is one share with extra steps.\n"
+  );
+}
+function describeLayout(groups, groupThreshold) {
+  return groupThreshold === 1 && groups.length === 1 ? `any ${groups[0].threshold} of ${groups[0].count} shares` : `any ${groupThreshold} of ${groups.length} groups, each at its own threshold`;
+}
+var EXHAUSTIVE_LIMIT = 5e3;
+var SAMPLE_SIZE = 500;
+function verifyShareLayout({ groupThreshold, groups, shares, entropy, rng }) {
+  const check = (subset) => assert4.ok(
+    equalBytes(combineShares(subset, ""), entropy),
+    "ROUND-TRIP FAILED: a valid subset of shares does not restore the entropy"
+  );
+  const total = countAdmissibleSubsetsExact(groupThreshold, groups);
+  if (total <= BigInt(EXHAUSTIVE_LIMIT)) {
+    for (const subset of admissibleSubsets(groupThreshold, groups, shares)) check(subset);
+    process3.stdout.write(
+      `
+  ok  all ${total} admissible share combinations verified to restore this exact wallet
+`
+    );
+    return;
+  }
+  check(
+    groups.slice(0, groupThreshold).flatMap((g, gi) => shares[gi].slice(0, g.threshold))
+  );
+  const sampledRanks = /* @__PURE__ */ new Set(["0"]);
+  while (sampledRanks.size <= SAMPLE_SIZE) {
+    const rank = randomAdmissibleRank(total, rng);
+    const key = rank.toString();
+    if (sampledRanks.has(key)) continue;
+    sampledRanks.add(key);
+    check(admissibleSubsetAtRank(groupThreshold, groups, shares, rank));
+  }
+  process3.stdout.write(
+    `
+  ok  ${SAMPLE_SIZE + 1} of ${total.toLocaleString("en-US")} admissible combinations verified (1 canonical + ` + SAMPLE_SIZE + " unique random ranks).\n  !   Exhaustive checking was SKIPPED: this layout has too many\n  !   combinations to enumerate. Every subset tested passed, but not\n  !   every subset was tested. A simpler layout such as 2of3 or 3of5\n  !   is verified exhaustively.\n"
   );
 }
 async function readShares() {
@@ -9114,6 +9262,18 @@ function selfTest({ quiet = false } = {}) {
     process3.stdout.write("\nSelf-test OK - all vectors and negative tests passed.\n");
   }
 }
+function isPermissionDenial(error) {
+  for (let cause = error; cause; cause = cause.cause) {
+    if (cause?.code === "ERR_ACCESS_DENIED") return true;
+  }
+  return false;
+}
+function describeFailure(error) {
+  for (let cause = error; cause; cause = cause.cause) {
+    if (cause?.code) return cause.code;
+  }
+  return error?.message ?? String(error);
+}
 async function proveSandbox() {
   const rows = [];
   const probe = async (name, fn) => {
@@ -9121,11 +9281,15 @@ async function proveSandbox() {
       await fn();
       rows.push({ ok: false, name, detail: "ALLOWED" });
     } catch (error) {
-      rows.push({
-        ok: true,
-        name,
-        detail: error.code ?? error.cause?.code ?? "blocked"
-      });
+      if (isPermissionDenial(error)) {
+        rows.push({ ok: true, name, detail: "ERR_ACCESS_DENIED" });
+      } else {
+        rows.push({
+          ok: false,
+          name,
+          detail: `NOT ENFORCED - failed with ${describeFailure(error)}, not a permission denial`
+        });
+      }
     }
   };
   process3.stdout.write("\nTRUSTED-CODE CAPABILITY GUARD\n");
@@ -9133,8 +9297,15 @@ async function proveSandbox() {
     process3.stdout.write(
       "  x   Permission model is OFF - nothing below is enforced.\n      Run this through `npm run prove-guard`, which passes --permission.\n"
     );
+  } else if (!supportsNetworkPermission()) {
+    process3.stdout.write(
+      `  x   This Node (${process3.version}) has no network permission scope. The
+      two network probes below cannot be denied by it; --allow-net arrived
+      in Node 25. Use Node 26 LTS.
+`
+    );
   }
-  await probe("network: fetch()", () => fetch("http://127.0.0.1:1"));
+  await probe("network: fetch()", () => fetch("http://127.0.0.1:65530"));
   await probe("network: dns lookup", async () => {
     const dns = await import("node:dns/promises");
     await dns.lookup("example.com");
@@ -9156,7 +9327,7 @@ async function proveSandbox() {
   await probe("read outside the package", () => fs.readFileSync(`${os2.homedir()}/.ssh/id_rsa`));
   for (const row of rows) {
     process3.stdout.write(
-      `  ${row.ok ? "ok " : "FAIL"}  ${row.name.padEnd(26)} ${row.detail}
+      `  ${row.ok ? "ok  " : "FAIL"}  ${row.name.padEnd(26)} ${row.detail}
 `
     );
   }
@@ -9493,6 +9664,7 @@ async function safeOwnerCeremony({ rehearsal }) {
   let entropy = null;
   let seed = null;
   let bundle = null;
+  let failure = null;
   try {
     if (rehearsal) {
       entropy = Buffer.from(REHEARSAL_ENTROPY);
@@ -9597,14 +9769,23 @@ https://github.com/ilyamk/heatdeath/discussions
 `
       );
     }
+  } catch (error) {
+    failure = error;
   } finally {
     bundle?.dispose();
     for (const account of bundle?.accounts ?? []) account.privateKey.fill(0);
     seed?.fill(0);
     entropy?.fill(0);
     if (dice) dice.bytes.fill(0);
-    if (!rehearsal) await offerScreenWipe();
   }
+  if (!rehearsal) {
+    try {
+      await offerScreenWipe();
+    } catch (wipeError) {
+      if (!failure) throw wipeError;
+    }
+  }
+  if (failure) throw failure;
 }
 function doctor() {
   const { blockers, warnings } = inspectRuntime({
@@ -9624,6 +9805,12 @@ function doctor() {
 }
 async function wizard(cli) {
   const TOTAL = 6;
+  const groups = parseGroupSpec(cli.shareSpec);
+  assert4.ok(
+    cli.groupThreshold >= 1 && cli.groupThreshold <= groups.length,
+    `--group-threshold must be between 1 and ${groups.length}`
+  );
+  const layout = describeLayout(groups, cli.groupThreshold);
   step(1, TOTAL, "Environment and integrity");
   assertRuntime();
   selfTest({ quiet: true });
@@ -9652,7 +9839,10 @@ or backdoored. They are XORed in, never substituted, so they cannot make
 the result worse.
 ` + dim("  Not hypothetical: a firmware bug shipped by a hardware-wallet vendor\n  in 2026 cut real entropy to ~40 bits. Only users who had rolled\n  dice were unaffected.\n\n")
   );
-  if (await confirm("Roll dice yourself? Type", "yes")) {
+  if (cli.useDice) {
+    process3.stdout.write(dim("  --dice was given, so the dice step starts without asking.\n"));
+    dice = await readDice();
+  } else if (await confirm("Roll dice yourself? Type", "yes")) {
     dice = await readDice();
   } else {
     process3.stdout.write(
@@ -9681,15 +9871,17 @@ the result worse.
   );
   const passphrase = await readPassphraseTwice({ newWallet: true });
   step(4, TOTAL, "Generation");
-  const phrase = entropyToMnemonic(entropy, wordlist);
-  assert4.equal(validateMnemonic(phrase, wordlist), true);
-  assert4.ok(
-    equalBytes(mnemonicToEntropy(phrase, wordlist), entropy),
-    "ROUND-TRIP FAILED: the mnemonic does not reconstruct the generated entropy"
-  );
-  const seed = mnemonicToSeedSync(phrase, passphrase);
-  const bundle = primaryAccounts(seed, cli.scheme, Math.max(cli.count, 2));
+  let seed = null;
+  let bundle = null;
   try {
+    const phrase = entropyToMnemonic(entropy, wordlist);
+    assert4.equal(validateMnemonic(phrase, wordlist), true);
+    assert4.ok(
+      equalBytes(mnemonicToEntropy(phrase, wordlist), entropy),
+      "ROUND-TRIP FAILED: the mnemonic does not reconstruct the generated entropy"
+    );
+    seed = mnemonicToSeedSync(phrase, passphrase);
+    bundle = primaryAccounts(seed, cli.scheme, Math.max(cli.count, 2));
     crossCheck({
       entropy,
       phrase,
@@ -9712,35 +9904,41 @@ the result worse.
 ` + dim("  Write these two down as well. They identify this wallet later.\n")
     );
     printAccounts(bundle.accounts.slice(0, cli.count), {
-      showPrivate: false,
-      showPublic: false
+      showPrivate: cli.showPrivate,
+      showPublic: cli.showPublic
     });
     if (cli.qr) printAddressQRs(bundle.accounts.slice(0, cli.count));
     step(6, TOTAL, "Backup against loss");
     process3.stdout.write(
-      "One piece of paper is a single point of failure, and losing it is more\nlikely than any attack. SLIP-39 splits the wallet into shares: any two\nof three restore it. One alone leaves about 224 bits unknown; the\nSLIP-39 digest prevents a literal zero-information claim.\n\n" + dim("  Shares carry the entropy, NOT your passphrase. Store them apart.\n\n")
+      `One piece of paper is a single point of failure, and losing it is more
+likely than any attack. SLIP-39 splits the wallet into shares: ${layout}
+restore it. Fewer leave about 224 bits unknown; the SLIP-39 digest
+prevents a literal zero-information claim.
+
+` + dim("  Shares carry the entropy, NOT your passphrase. Store them apart.\n") + dim(`  Layout: --shares=${cli.shareSpec} --group-threshold=${cli.groupThreshold}
+
+`)
     );
-    if (await confirm("Create 2-of-3 shares now? Type", "yes")) {
+    if (await confirm(`Create SLIP-39 shares (${layout}) now? Type`, "yes")) {
       const rng = makeShamirRng();
       try {
-        const groups = parseGroupSpec("2of3");
         const shares = splitSecretIntoShares({
           secret: entropy,
           passphrase: "",
-          groupThreshold: 1,
+          groupThreshold: cli.groupThreshold,
           groups,
           extendable: true,
           iterationExponent: 0,
           rng
         });
-        for (const subset of admissibleSubsets(1, groups, shares)) {
-          assert4.ok(
-            equalBytes(combineShares(subset, ""), entropy),
-            "ROUND-TRIP FAILED: a valid subset of shares does not restore the entropy"
-          );
-        }
-        process3.stdout.write(green("\n  ok  ") + "all 3 share combinations verified\n");
-        printShares(shares, groups, 1);
+        verifyShareLayout({
+          groupThreshold: cli.groupThreshold,
+          groups,
+          shares,
+          entropy,
+          rng
+        });
+        printShares(shares, groups, cli.groupThreshold);
       } finally {
         rng.dispose();
       }
@@ -9754,10 +9952,10 @@ ${bold("DONE.")} Before you move meaningful funds:
 `
     );
   } finally {
-    bundle.dispose();
-    for (const a of bundle.accounts) a.privateKey.fill(0);
+    bundle?.dispose();
+    for (const a of bundle?.accounts ?? []) a.privateKey.fill(0);
     entropy.fill(0);
-    seed.fill(0);
+    seed?.fill(0);
     if (dice) dice.bytes.fill(0);
   }
   await offerScreenWipe();
@@ -9921,10 +10119,11 @@ async function exportToOnePassword({ scheme, count, dryRun }) {
       );
     }
     process3.stdout.write("  ok  all 3 SLIP-39 share combinations verified\n");
+    const anchor = accounts[1] ?? accounts[0];
     process3.stdout.write(
       `
   master fingerprint: ${bold(fingerprint)}
-  index 1 address:    ${bold(accounts[1]?.address ?? accounts[0].address)}
+  index ${anchor.index} address:    ${bold(anchor.address)}
 ` + dim("  Confirm these match what you recorded before writing anything.\n")
     );
     const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d+Z$/, "Z");
@@ -10106,39 +10305,7 @@ YOU ARE ABOUT TO SPLIT THIS WALLET
       iterationExponent: 0,
       rng
     });
-    const EXHAUSTIVE_LIMIT = 5e3;
-    const SAMPLE_SIZE = 500;
-    const total = countAdmissibleSubsetsExact(groupThreshold, groups);
-    const check = (subset) => assert4.ok(
-      equalBytes(combineShares(subset, ""), entropy),
-      "ROUND-TRIP FAILED: a valid subset of shares does not restore the entropy"
-    );
-    if (total <= BigInt(EXHAUSTIVE_LIMIT)) {
-      for (const subset of admissibleSubsets(groupThreshold, groups, shares)) {
-        check(subset);
-      }
-      process3.stdout.write(
-        `
-  ok  all ${total} admissible share combinations verified to restore this exact wallet
-`
-      );
-    } else {
-      check(
-        groups.slice(0, groupThreshold).flatMap((g, gi) => shares[gi].slice(0, g.threshold))
-      );
-      const sampledRanks = /* @__PURE__ */ new Set(["0"]);
-      while (sampledRanks.size <= SAMPLE_SIZE) {
-        const rank = randomAdmissibleRank(total, rng);
-        const key = rank.toString();
-        if (sampledRanks.has(key)) continue;
-        sampledRanks.add(key);
-        check(admissibleSubsetAtRank(groupThreshold, groups, shares, rank));
-      }
-      process3.stdout.write(
-        `
-  ok  ${SAMPLE_SIZE + 1} of ${total.toLocaleString("en-US")} admissible combinations verified (1 canonical + ` + SAMPLE_SIZE + " unique random ranks).\n  !   Exhaustive checking was SKIPPED: this layout has too many\n  !   combinations to enumerate. Every subset tested passed, but not\n  !   every subset was tested. A simpler layout such as 2of3 or 3of5\n  !   is verified exhaustively.\n"
-      );
-    }
+    verifyShareLayout({ groupThreshold, groups, shares, entropy, rng });
     printShares(shares, groups, groupThreshold);
     process3.stdout.write(
       `
@@ -10264,6 +10431,10 @@ never argv, never an environment variable, never a file.
 SLIP-39 shares here carry the BIP-39 ENTROPY, not a BIP-32 seed. Restore them
 with --combine. A Trezor reads a SLIP-39 secret as a seed directly and would
 show different addresses. Shares never carry your BIP-39 passphrase.
+
+Node 26 LTS is required. The capability guard's network scope (--allow-net)
+exists only from Node 25; on an older runtime --prove-guard reports the network
+probes as NOT ENFORCED and the launchers refuse secret-capable commands.
 
 On macOS a downloaded binary is quarantined and Gatekeeper kills it silently
 (exit 137, no output). Clear it with:  xattr -d com.apple.quarantine ./FILE

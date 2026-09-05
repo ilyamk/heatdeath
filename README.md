@@ -75,7 +75,7 @@ Not features. Checks you can run yourself, right now.
 |:--:|:--|:--|
 | 🧪 | **Known-answer vectors gate the output.** BIP-39, EIP-55, BIP-32 and a wordlist SHA-256 run *before any secret exists*. One mismatch and nothing is printed. | `npm run self-test` → 22 groups |
 | ♊ | **Two independent implementations must agree.** BIP-39 encoding, PBKDF2 and BIP-32 CKDpriv are computed twice — via `@scure`, and again on bare `node:crypto`. Disagreement is a refusal. | included in the self-test |
-| 🔒 | **Least privilege for trusted code.** Node's Permission Model denies network, DNS, subprocesses, workers and filesystem writes. Source checkouts get repository read access; a verified release bundle gets only `/dev/urandom`. It is a capability guard, not a malicious-code sandbox. | `npm run prove-guard` → `6/6 denied` |
+| 🔒 | **Least privilege for trusted code.** Node's Permission Model denies network, DNS, subprocesses, workers and filesystem writes. Source checkouts get repository read access; a verified release bundle gets only `/dev/urandom`. It is a capability guard, not a malicious-code sandbox. **Needs Node 26 LTS:** the network scope arrived in Node 25, and on an older runtime `prove-guard` reports the two network probes as *not enforced* instead of printing a proof it did not earn. | `npm run prove-guard` → `6/6 denied` |
 | 🎲 | **Two required OS entropy paths.** OpenSSL `randomBytes` and a direct `/dev/urandom` read are XORed after domain-separated SHA-256 and catastrophic-output tests. Optional physical dice are the only source independent of the machine. Unequal samples do not prove independence. | printed at generation |
 | 🚫 | **Refuses to run where secrecy is impossible.** SSH session, attached debugger, redirected stdin or stdout — hard stop, before a secret exists. | try it |
 | ✍️ | **Catches the mistake that actually loses money.** The wizard blanks the screen and makes you type the phrase back from paper, comparing word by word. | `npm run wizard` |
@@ -107,6 +107,10 @@ phrase. It does not deploy a Safe or sign transactions, and importing the phrase
 into an online wallet ends its cold status.
 
 ### 1 · Get it and check it — while still online
+
+Use **Node 26 LTS** (`.node-version`). Secret-capable commands refuse to start on an
+older Node because its Permission Model cannot deny network access; the diagnostics
+below still run and say so.
 
 ```sh
 git clone https://github.com/ilyamk/heatdeath.git && cd heatdeath

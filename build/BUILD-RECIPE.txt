@@ -1,7 +1,7 @@
-Reproduce HEATDEATH v2.2.0
+Reproduce HEATDEATH v2.3.0
 ==========================
 
-1. Obtain the annotated tag v2.2.0 and independently pin its commit.
+1. Obtain the annotated tag v2.3.0 and independently pin its commit.
 2. Use Node v26.7.0 independently on darwin/arm64 and linux/x64.
 3. Confirm npm 11.19.0, then run `npm ci --ignore-scripts`; verify the lockfile
    and registry attestations independently.

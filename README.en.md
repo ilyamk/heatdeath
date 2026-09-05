@@ -10,6 +10,9 @@ One readable 300 KB file - a built bundle with no runtime dependencies
 phrase from 256 bits of entropy and derives Ethereum addresses. Compatible with
 MetaMask, Rabby, Trust, Ledger, Rainbow — with anything that understands BIP-39.
 
+Requires Node 26 LTS (`.node-version`): the Permission Model's network scope exists
+only from Node 25, and secret-capable commands refuse to start without it.
+
 ```sh
 npm ci --ignore-scripts
 npm run self-test        # 22 groups of checks, including negative ones
@@ -31,7 +34,7 @@ Every line below is checked by a command, not by a promise.
 |---|---|
 | **Vectors run before any secret exists** | `npm run self-test`. If even one reference vector fails to match, the tool refuses to generate. |
 | **Two independent implementations** | BIP-39, PBKDF2 and BIP-32 CKDpriv are computed twice: through `@scure` and through bare `node:crypto`. A divergence = refusal. |
-| **Sandbox at the runtime level** | `npm run prove-sandbox` → `6/6 capability probes denied`. All six: network, DNS, subprocesses, workers, disk writes and reads outside the package directory - forbidden by Node, not by the author's conscience. |
+| **Sandbox at the runtime level** | `npm run prove-sandbox` → `6/6 capability probes denied`. All six: network, DNS, subprocesses, workers, disk writes and reads outside the package directory - forbidden by Node, not by the author's conscience. A probe counts as denied only when Node answers `ERR_ACCESS_DENIED`; a refused connection or a DNS miss on an offline machine is reported as *not enforced*. |
 | **Multi-source entropy** | Three OS sources plus dice, XOR of domain-separated hashes, health tests in the style of NIST SP 800-90B. |
 | **Refusal in a dangerous environment** | SSH, an attached debugger, redirected stdin or stdout — refusal. tmux, root, a cloud-synced directory — warning. |
 | **`--verify` against transcription errors** | Expands abbreviations from 3 letters, suggests corrections by Levenshtein distance. A transcription error is the number one cause of losses. |
@@ -106,8 +109,8 @@ npm run rehearse:safe-owner  public Safe cold-owner rehearsal
 npm run doctor           inspect readiness without creating a secret
 npm run safe-owner       create one Safe cold/recovery owner
 npm run self-test        all reference and negative tests
-npm run generate         a new wallet
-npm run generate:dice    the same plus dice and screen wiping (recommended)
+npm run generate         a new wallet; offers a screen and scrollback wipe at the end
+npm run generate:dice    the same plus dice (recommended)
 npm run generate:account Ledger Live scheme: addresses are not linked by one xpub
 npm run verify           check a phrase against paper
 npm run split            split the phrase into SLIP-39 shares
@@ -124,6 +127,8 @@ that mode never falls back to source.
 
 Options: `--dice`, `--scheme=metamask|account`, `--accounts=N`, `--shares=2of3`,
 `--group-threshold=N`, `--show-public`, `--show-private`, `--wipe-screen`, `--qr`.
+The wizard honours `--dice`, `--shares`, `--group-threshold`, `--show-public` and
+`--show-private`; it always offers the screen wipe, so `--wipe-screen` is rejected there.
 
 ### `--qr` — checking addresses without retyping
 

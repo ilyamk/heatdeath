@@ -69,7 +69,7 @@ is not running.
    for.
 2. Write it to the first stick.
 3. Put the following on the second stick:
-   - the v2.2 `heatdeath-linux-x64` release binary;
+   - the v2.3 `heatdeath-linux-x64` release binary;
    - the signed `SHA256SUMS` and the independently trusted public-key
      fingerprints used to verify that release;
    - optionally `heatdeath.mjs` and the exact Node linux-x64 archive if you prefer
@@ -190,7 +190,9 @@ npm run prove-sandbox
 ```
 
 The expected result: `Self-test OK` and `6/6 capability probes denied`.
-If something is off — **do not continue**.
+If something is off — **do not continue**. On a Node older than 26 the network
+probes are reported as *not enforced* and the wizard refuses to start: switch to
+Node 26 LTS (`.node-version`) rather than working around it.
 
 Save the file hashes separately (for example, photograph the screen with a phone
 that then takes no part in the generation):

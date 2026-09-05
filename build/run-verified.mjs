@@ -20,6 +20,11 @@ if (separator === -1 || separator === process.argv.length - 1) {
   throw new Error("run-verified requires arguments after --");
 }
 const args = process.argv.slice(separator + 1);
+// Imported only after the NODE_OPTIONS refusal above: an inherited
+// --permission would otherwise deny reading this very module first.
+const { launcherRefusal } = await import("./launcher-guard.mjs");
+const refusal = launcherRefusal(args, process);
+if (refusal) throw new Error(refusal);
 const opExport = args.includes("--op-export");
 
 const verified = spawnSync(process.execPath, ["build/verify-release.mjs"], {

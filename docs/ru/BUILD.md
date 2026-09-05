@@ -6,14 +6,14 @@
 собирает bundle закреплённым esbuild и проверяет `dist/heatdeath.mjs`. Нативные
 бинарники, provenance и подписи не создаются.
 
-`npm run build:release` создаёт одну нативную часть релиза `v2.2.0`. Требуются:
+`npm run build:release` создаёт одну нативную часть релиза `v2.3.0`. Требуются:
 
-- чистое рабочее дерево и аннотированный тег `v2.2.0`, указывающий на `HEAD`;
+- чистое рабочее дерево и аннотированный тег `v2.3.0`, указывающий на `HEAD`;
 - Node v26.7.0, npm 11.19.0 и esbuild 0.28.2;
 - либо darwin/arm64, либо linux/x64.
 
 Каждая платформа создаёт одинаковые bundle, детерминированный
-`heatdeath-v2.2.0-source.tar.gz`, SPDX `heatdeath-v2.2.0.spdx.json` и рецепт,
+`heatdeath-v2.3.0-source.tar.gz`, SPDX `heatdeath-v2.3.0.spdx.json` и рецепт,
 а также собственные SEA и provenance:
 
 - `heatdeath-darwin-arm64` и `SOURCE-PROVENANCE-darwin-arm64.json`;

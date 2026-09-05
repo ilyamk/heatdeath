@@ -159,6 +159,10 @@ jobs:
           chmod 0755 "downloaded/$NATIVE"
           "downloaded/$NATIVE" --self-test
           "downloaded/$NATIVE" --prove-guard
+          # sea.json sets execArgvExtension "none": ambient NODE_OPTIONS must
+          # not widen the SEA's permissions. If it were honoured, the write
+          # grant below would flip the file-write probe to ALLOWED and fail.
+          NODE_OPTIONS="--allow-fs-write=$RUNNER_TEMP" "downloaded/$NATIVE" --prove-guard
       - name: Verify macOS code signature
         if: matrix.id == 'darwin-arm64'
         run: codesign --verify --deep --strict downloaded/heatdeath-darwin-arm64

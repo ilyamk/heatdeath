@@ -77,13 +77,13 @@ import { encodeAddressQRs, qrSelfTest, renderQR } from "./qr.mjs";
 import { parseCli } from "./cli.mjs";
 import {
   ESC,
-  looksObviouslyWeakPassphrase,
   normalizePassphrase,
+  passphraseCautions,
   readInput,
   validateNewWalletPassphrase,
 } from "./terminal.mjs";
 import { sendSecretPayload } from "./op-transport.mjs";
-import { inspectRuntime } from "./runtime.mjs";
+import { inspectRuntime, supportsNetworkPermission } from "./runtime.mjs";
 
 // ---------------------------------------------------------------------------
 // CONSTANTS
@@ -97,6 +97,9 @@ const DICE_MIN_ROLLS = 128; // 128 * log2(6) = 330.9 bits, margin over 256
                             // so that even a visibly imperfect die stays
                             // far above the 128-bit level that matters.
 const SAFE_OWNER_SCHEME = "metamask";
+// A mismatched passphrase used to abort the whole run - after the dice had
+// been rolled and the entropy collected. It is now retried; this bounds it.
+const PASSPHRASE_ATTEMPTS = 5;
 const REHEARSAL_ENTROPY = Buffer.alloc(ENTROPY_BYTES, 0); // Public BIP-39 vector.
 const REHEARSAL_BANNER = "PUBLIC TEST DATA - NEVER FUND THIS ADDRESS";
 
@@ -642,9 +645,39 @@ async function readPassphraseTwice({ newWallet = false } = {}) {
       "  Empty = standard wallet, opens in every wallet's default import.\n" +
       "  Input is hidden. Press Enter on an empty line for no passphrase.\n\n",
   );
+  // A mismatch or a rejected passphrase is retried rather than thrown: by the
+  // time this prompt appears the dice have been rolled and the entropy
+  // collected, and throwing that away punishes exactly the careful user.
+  // Ctrl+U clears a line typed blind; a voluntary "choose another" does not
+  // count against the attempt limit.
+  for (let failures = 0; ;) {
+    const outcome = await readPassphraseOnce({ newWallet });
+    if (outcome.ok) return outcome.passphrase;
+    if (!outcome.voluntary) {
+      failures += 1;
+      if (failures >= PASSPHRASE_ATTEMPTS) {
+        throw new Error(
+          `passphrase not confirmed after ${PASSPHRASE_ATTEMPTS} attempts - nothing was generated`,
+        );
+      }
+    }
+    process.stdout.write(
+      `\n  ! ${outcome.reason}\n` +
+        "  ! Enter the passphrase again (Ctrl+U clears the line). Nothing\n" +
+        "  ! collected so far is lost.\n\n",
+    );
+  }
+}
+
+async function readPassphraseOnce({ newWallet }) {
   const firstRaw = await readInput("passphrase: ");
-  if (newWallet) validateNewWalletPassphrase(firstRaw);
-  else if (/[^\x20-\x7e]/.test(firstRaw)) {
+  if (newWallet) {
+    try {
+      validateNewWalletPassphrase(firstRaw);
+    } catch (error) {
+      return { ok: false, reason: error.message };
+    }
+  } else if (/[^\x20-\x7e]/.test(firstRaw)) {
     process.stdout.write(
       "\n  ! Unicode recovery mode: the text will be normalized with NFKD.\n" +
         "  ! Confirm the resulting wallet fingerprint against your record.\n",
@@ -653,25 +686,30 @@ async function readPassphraseTwice({ newWallet = false } = {}) {
   const first = normalizePassphrase(firstRaw);
   if (first === "") {
     process.stdout.write("Using an EMPTY passphrase (standard wallet).\n");
-    return "";
+    return { ok: true, passphrase: "" };
   }
   const secondRaw = await readInput("repeat:     ");
-  if (newWallet) validateNewWalletPassphrase(secondRaw);
-  const second = normalizePassphrase(secondRaw);
   // A silent typo here produces a permanently different, unrecoverable wallet.
-  assert.equal(first, second, "Passphrases do not match - nothing was generated");
+  if (normalizePassphrase(secondRaw) !== first) {
+    return { ok: false, reason: "Passphrases do not match." };
+  }
 
   process.stdout.write("\nPassphrase accepted and confirmed.\n");
-  if (looksObviouslyWeakPassphrase(first)) {
-    process.stdout.write(
-      "\n  ! This passphrase has an obvious weak structure or is short.\n" +
-        "  ! Software cannot infer how randomly a passphrase was selected and\n" +
-        "  ! therefore cannot assign it honest entropy or cracking-time numbers.\n" +
-        "  ! Use independently sampled Diceware words/random characters, or use\n" +
-        "  ! no passphrase. Ctrl+C now to reconsider.\n",
-    );
+  const cautions = passphraseCautions(first);
+  if (cautions.length > 0) {
+    process.stdout.write("\n");
+    for (const caution of cautions) process.stdout.write(`  ! ${caution}\n`);
+    if (newWallet) {
+      const answer = await readInput(
+        "\n  Type \"keep\" to use it anyway, or press Enter to choose another: ",
+        { echo: true },
+      );
+      if (answer.trim().toLowerCase() !== "keep") {
+        return { ok: false, voluntary: true, reason: "Choose a different passphrase." };
+      }
+    }
   }
-  return first;
+  return { ok: true, passphrase: first };
 }
 
 async function readDice() {
@@ -712,10 +750,22 @@ async function readDice() {
       process.stdout.write("  Cancelled - continuing without dice.\n");
       return null;
     }
-    const batch = [...raw].filter((c) => c >= "1" && c <= "6").map(Number);
-    const ignored = [...raw].filter((c) => !/[1-6\s,.-]/.test(c)).length;
-    if (ignored > 0) {
-      process.stdout.write(`  ! ${ignored} character(s) outside 1-6 were ignored.\n`);
+    const chars = [...raw];
+    const batch = chars.filter((c) => c >= "1" && c <= "6").map(Number);
+    // Input is hidden, so this is the only place a slipped finger shows. A
+    // 0, 7, 8 or 9 cannot come from a d6 and is almost certainly a typo next
+    // to a digit that was meant; say so instead of lumping it with stray
+    // punctuation.
+    const wrongDigits = chars.filter((c) => /[0789]/.test(c)).length;
+    const other = chars.filter((c) => !/[0-9\s,.-]/.test(c)).length;
+    if (wrongDigits > 0) {
+      process.stdout.write(
+        `  ! ${wrongDigits} digit(s) outside 1-6 (0, 7, 8 or 9) were ignored - a d6 ` +
+          "cannot roll them. Check the line for a typo before continuing.\n",
+      );
+    }
+    if (other > 0) {
+      process.stdout.write(`  ! ${other} non-digit character(s) were ignored.\n`);
     }
     if (batch.length === 0) {
       process.stdout.write("  ! Nothing usable in that line. Digits 1-6 only.\n");
@@ -918,6 +968,66 @@ function printShares(groupsOfShares, groups, groupThreshold) {
   process.stdout.write(
     "\n  Store each share in a DIFFERENT physical place. Two shares in one\n" +
       "  drawer is one share with extra steps.\n",
+  );
+}
+
+/** "any 2 of 3 shares" or "any 2 of 3 groups, each at its own threshold". */
+function describeLayout(groups, groupThreshold) {
+  return groupThreshold === 1 && groups.length === 1
+    ? `any ${groups[0].threshold} of ${groups[0].count} shares`
+    : `any ${groupThreshold} of ${groups.length} groups, each at its own threshold`;
+}
+
+// Fail closed: prove the shares actually recombine BEFORE showing them.
+// Printing shares that cannot restore the wallet would be the worst possible
+// outcome of any command here.
+//
+// The number of admissible subsets is a PRODUCT across groups and explodes -
+// 8of16 in two groups at group threshold 2 is C(16,8)^2, about 165 million -
+// so it is counted first and only enumerated when small. Above the bound a
+// random sample is used, and the counts are printed: silently checking 500 of
+// 165 million while reporting "verified" would be a lie of exactly the kind
+// this tool exists to avoid.
+const EXHAUSTIVE_LIMIT = 5000;
+const SAMPLE_SIZE = 500;
+
+function verifyShareLayout({ groupThreshold, groups, shares, entropy, rng }) {
+  const check = (subset) => assert.ok(
+    equalBytes(combineShares(subset, ""), entropy),
+    "ROUND-TRIP FAILED: a valid subset of shares does not restore the entropy",
+  );
+  const total = countAdmissibleSubsetsExact(groupThreshold, groups);
+
+  if (total <= BigInt(EXHAUSTIVE_LIMIT)) {
+    for (const subset of admissibleSubsets(groupThreshold, groups, shares)) check(subset);
+    process.stdout.write(
+      `\n  ok  all ${total} admissible share combinations verified to ` +
+        "restore this exact wallet\n",
+    );
+    return;
+  }
+
+  // Always include the canonical subset - the first threshold members of the
+  // first threshold groups - so the most likely recovery path is never left
+  // to chance.
+  check(
+    groups.slice(0, groupThreshold).flatMap((g, gi) => shares[gi].slice(0, g.threshold)),
+  );
+  const sampledRanks = new Set(["0"]); // canonical subset already checked
+  while (sampledRanks.size <= SAMPLE_SIZE) {
+    const rank = randomAdmissibleRank(total, rng);
+    const key = rank.toString();
+    if (sampledRanks.has(key)) continue;
+    sampledRanks.add(key);
+    check(admissibleSubsetAtRank(groupThreshold, groups, shares, rank));
+  }
+  process.stdout.write(
+    `\n  ok  ${SAMPLE_SIZE + 1} of ${total.toLocaleString("en-US")} admissible ` +
+      "combinations verified (1 canonical + " + SAMPLE_SIZE + " unique random ranks).\n" +
+      "  !   Exhaustive checking was SKIPPED: this layout has too many\n" +
+      "  !   combinations to enumerate. Every subset tested passed, but not\n" +
+      "  !   every subset was tested. A simpler layout such as 2of3 or 3of5\n" +
+      "  !   is verified exhaustively.\n",
   );
 }
 
@@ -1180,18 +1290,42 @@ function selfTest({ quiet = false } = {}) {
  * This exists because "the tool is offline" is otherwise an assertion the user
  * has to take on trust. Here it is an observation they can reproduce.
  */
+/** True only when the Permission Model itself refused, anywhere in the cause chain. */
+function isPermissionDenial(error) {
+  for (let cause = error; cause; cause = cause.cause) {
+    if (cause?.code === "ERR_ACCESS_DENIED") return true;
+  }
+  return false;
+}
+
+function describeFailure(error) {
+  for (let cause = error; cause; cause = cause.cause) {
+    if (cause?.code) return cause.code;
+  }
+  return error?.message ?? String(error);
+}
+
 async function proveSandbox() {
   const rows = [];
+  // A probe counts as denied ONLY when the runtime answered ERR_ACCESS_DENIED.
+  // Any other failure - a refused connection, a DNS miss because Wi-Fi is off,
+  // a missing file - means the guard did NOT stop the attempt, and reporting
+  // it as "blocked" would let an offline machine print a proof it never
+  // earned. That is exactly the false comfort this command exists to remove.
   const probe = async (name, fn) => {
     try {
       await fn();
       rows.push({ ok: false, name, detail: "ALLOWED" });
     } catch (error) {
-      rows.push({
-        ok: true,
-        name,
-        detail: error.code ?? error.cause?.code ?? "blocked",
-      });
+      if (isPermissionDenial(error)) {
+        rows.push({ ok: true, name, detail: "ERR_ACCESS_DENIED" });
+      } else {
+        rows.push({
+          ok: false,
+          name,
+          detail: `NOT ENFORCED - failed with ${describeFailure(error)}, not a permission denial`,
+        });
+      }
     }
   };
 
@@ -1201,9 +1335,18 @@ async function proveSandbox() {
       "  x   Permission model is OFF - nothing below is enforced.\n" +
         "      Run this through `npm run prove-guard`, which passes --permission.\n",
     );
+  } else if (!supportsNetworkPermission()) {
+    process.stdout.write(
+      `  x   This Node (${process.version}) has no network permission scope. The\n` +
+        "      two network probes below cannot be denied by it; --allow-net arrived\n" +
+        "      in Node 25. Use Node 26 LTS.\n",
+    );
   }
 
-  await probe("network: fetch()", () => fetch("http://127.0.0.1:1"));
+  // Port 65530, not port 1: undici refuses "bad ports" such as 1 before any
+  // socket is opened, so a probe against them never reaches the guard and
+  // fails identically whether or not the network is denied.
+  await probe("network: fetch()", () => fetch("http://127.0.0.1:65530"));
   await probe("network: dns lookup", async () => {
     const dns = await import("node:dns/promises");
     await dns.lookup("example.com");
@@ -1227,7 +1370,7 @@ async function proveSandbox() {
 
   for (const row of rows) {
     process.stdout.write(
-      `  ${row.ok ? "ok " : "FAIL"}  ${row.name.padEnd(26)} ${row.detail}\n`,
+      `  ${row.ok ? "ok  " : "FAIL"}  ${row.name.padEnd(26)} ${row.detail}\n`,
     );
   }
 
@@ -1645,6 +1788,7 @@ async function safeOwnerCeremony({ rehearsal }) {
   let entropy = null;
   let seed = null;
   let bundle = null;
+  let failure = null;
   try {
     if (rehearsal) {
       entropy = Buffer.from(REHEARSAL_ENTROPY);
@@ -1743,14 +1887,27 @@ async function safeOwnerCeremony({ rehearsal }) {
           "https://github.com/ilyamk/heatdeath/discussions\n",
       );
     }
+  } catch (error) {
+    failure = error;
   } finally {
     bundle?.dispose();
     for (const account of bundle?.accounts ?? []) account.privateKey.fill(0);
     seed?.fill(0);
     entropy?.fill(0);
     if (dice) dice.bytes.fill(0);
-    if (!rehearsal) await offerScreenWipe();
   }
+  // The wipe offer is deliberately outside the finally block. It reads from
+  // the terminal, and a prompt that fails after Ctrl+C or a closed stdin must
+  // never replace the error that actually stopped the ceremony. The offer is
+  // still made after a failure: partial output may hold the phrase.
+  if (!rehearsal) {
+    try {
+      await offerScreenWipe();
+    } catch (wipeError) {
+      if (!failure) throw wipeError;
+    }
+  }
+  if (failure) throw failure;
 }
 
 function doctor() {
@@ -1771,6 +1928,15 @@ function doctor() {
 
 async function wizard(cli) {
   const TOTAL = 6;
+
+  // Every accepted flag is honoured here. A layout that cannot be built must
+  // fail now, before a die is rolled, not after the phrase is on paper.
+  const groups = parseGroupSpec(cli.shareSpec);
+  assert.ok(
+    cli.groupThreshold >= 1 && cli.groupThreshold <= groups.length,
+    `--group-threshold must be between 1 and ${groups.length}`,
+  );
+  const layout = describeLayout(groups, cli.groupThreshold);
 
   step(1, TOTAL, "Environment and integrity");
   assertRuntime();
@@ -1812,7 +1978,10 @@ async function wizard(cli) {
           "  in 2026 cut real entropy to ~40 bits. Only users who had rolled\n" +
           "  dice were unaffected.\n\n"),
   );
-  if (await confirm("Roll dice yourself? Type", "yes")) {
+  if (cli.useDice) {
+    process.stdout.write(dim("  --dice was given, so the dice step starts without asking.\n"));
+    dice = await readDice();
+  } else if (await confirm("Roll dice yourself? Type", "yes")) {
     dice = await readDice();
   } else {
     process.stdout.write(
@@ -1844,15 +2013,19 @@ async function wizard(cli) {
   const passphrase = await readPassphraseTwice({ newWallet: true });
 
   step(4, TOTAL, "Generation");
-  const phrase = entropyToMnemonic(entropy, wordlist);
-  assert.equal(validateMnemonic(phrase, wordlist), true);
-  assert.ok(
-    equalBytes(mnemonicToEntropy(phrase, wordlist), entropy),
-    "ROUND-TRIP FAILED: the mnemonic does not reconstruct the generated entropy",
-  );
-  const seed = mnemonicToSeedSync(phrase, passphrase);
-  const bundle = primaryAccounts(seed, cli.scheme, Math.max(cli.count, 2));
+  // Secret material exists from here on; everything that derives it sits
+  // inside the try so the finally block can zeroise it if any check throws.
+  let seed = null;
+  let bundle = null;
   try {
+    const phrase = entropyToMnemonic(entropy, wordlist);
+    assert.equal(validateMnemonic(phrase, wordlist), true);
+    assert.ok(
+      equalBytes(mnemonicToEntropy(phrase, wordlist), entropy),
+      "ROUND-TRIP FAILED: the mnemonic does not reconstruct the generated entropy",
+    );
+    seed = mnemonicToSeedSync(phrase, passphrase);
+    bundle = primaryAccounts(seed, cli.scheme, Math.max(cli.count, 2));
     crossCheck({
       entropy, phrase, passphrase, seed,
       accounts: bundle.accounts, fingerprint: bundle.fingerprint,
@@ -1872,34 +2045,31 @@ async function wizard(cli) {
         dim("  Write these two down as well. They identify this wallet later.\n"),
     );
     printAccounts(bundle.accounts.slice(0, cli.count), {
-      showPrivate: false, showPublic: false,
+      showPrivate: cli.showPrivate, showPublic: cli.showPublic,
     });
     if (cli.qr) printAddressQRs(bundle.accounts.slice(0, cli.count));
 
     step(6, TOTAL, "Backup against loss");
     process.stdout.write(
       "One piece of paper is a single point of failure, and losing it is more\n" +
-        "likely than any attack. SLIP-39 splits the wallet into shares: any two\n" +
-        "of three restore it. One alone leaves about 224 bits unknown; the\n" +
-        "SLIP-39 digest prevents a literal zero-information claim.\n\n" +
-        dim("  Shares carry the entropy, NOT your passphrase. Store them apart.\n\n"),
+        "likely than any attack. SLIP-39 splits the wallet into shares: " +
+        `${layout}\n` +
+        "restore it. Fewer leave about 224 bits unknown; the SLIP-39 digest\n" +
+        "prevents a literal zero-information claim.\n\n" +
+        dim("  Shares carry the entropy, NOT your passphrase. Store them apart.\n") +
+        dim(`  Layout: --shares=${cli.shareSpec} --group-threshold=${cli.groupThreshold}\n\n`),
     );
-    if (await confirm("Create 2-of-3 shares now? Type", "yes")) {
+    if (await confirm(`Create SLIP-39 shares (${layout}) now? Type`, "yes")) {
       const rng = makeShamirRng();
       try {
-        const groups = parseGroupSpec("2of3");
         const shares = splitSecretIntoShares({
-          secret: entropy, passphrase: "", groupThreshold: 1, groups,
+          secret: entropy, passphrase: "", groupThreshold: cli.groupThreshold, groups,
           extendable: true, iterationExponent: 0, rng,
         });
-        for (const subset of admissibleSubsets(1, groups, shares)) {
-          assert.ok(
-            equalBytes(combineShares(subset, ""), entropy),
-            "ROUND-TRIP FAILED: a valid subset of shares does not restore the entropy",
-          );
-        }
-        process.stdout.write(green("\n  ok  ") + "all 3 share combinations verified\n");
-        printShares(shares, groups, 1);
+        verifyShareLayout({
+          groupThreshold: cli.groupThreshold, groups, shares, entropy, rng,
+        });
+        printShares(shares, groups, cli.groupThreshold);
       } finally {
         rng.dispose();
       }
@@ -1912,10 +2082,10 @@ async function wizard(cli) {
         `  3. Re-check the backup any time with ${bold("npm run verify")}.\n`,
     );
   } finally {
-    bundle.dispose();
-    for (const a of bundle.accounts) a.privateKey.fill(0);
+    bundle?.dispose();
+    for (const a of bundle?.accounts ?? []) a.privateKey.fill(0);
     entropy.fill(0);
-    seed.fill(0);
+    seed?.fill(0);
     if (dice) dice.bytes.fill(0);
   }
 
@@ -2172,9 +2342,12 @@ async function exportToOnePassword({ scheme, count, dryRun }) {
     }
     process.stdout.write("  ok  all 3 SLIP-39 share combinations verified\n");
 
+    // Index 1 distinguishes the two derivation schemes; index 0 does not. If
+    // only one account was derived, say which index is actually shown.
+    const anchor = accounts[1] ?? accounts[0];
     process.stdout.write(
       `\n  master fingerprint: ${bold(fingerprint)}\n` +
-        `  index 1 address:    ${bold(accounts[1]?.address ?? accounts[0].address)}\n` +
+        `  index ${anchor.index} address:    ${bold(anchor.address)}\n` +
         dim("  Confirm these match what you recorded before writing anything.\n"),
     );
 
@@ -2372,57 +2545,7 @@ async function split({ shareSpec, groupThreshold, scheme, count }) {
       rng,
     });
 
-    // Fail closed: prove the shares actually recombine BEFORE showing them.
-    // Printing shares that cannot restore the wallet would be the worst
-    // possible outcome of this command.
-    //
-    // The number of admissible subsets is a PRODUCT across groups and
-    // explodes - 8of16 in two groups at group threshold 2 is C(16,8)^2, about
-    // 165 million - so it is counted first and only enumerated when small.
-    // Above the bound a random sample is used, and the counts are printed:
-    // silently checking 500 of 165 million while reporting "verified" would
-    // be a lie of exactly the kind this tool exists to avoid.
-    const EXHAUSTIVE_LIMIT = 5000;
-    const SAMPLE_SIZE = 500;
-    const total = countAdmissibleSubsetsExact(groupThreshold, groups);
-    const check = (subset) => assert.ok(
-      equalBytes(combineShares(subset, ""), entropy),
-      "ROUND-TRIP FAILED: a valid subset of shares does not restore the entropy",
-    );
-
-    if (total <= BigInt(EXHAUSTIVE_LIMIT)) {
-      for (const subset of admissibleSubsets(groupThreshold, groups, shares)) {
-        check(subset);
-      }
-      process.stdout.write(
-        `\n  ok  all ${total} admissible share combinations verified to ` +
-          "restore this exact wallet\n",
-      );
-    } else {
-      // Always include the canonical subset - the first threshold members of
-      // the first threshold groups - so the most likely recovery path is
-      // never left to chance.
-      check(
-        groups.slice(0, groupThreshold).flatMap((g, gi) => shares[gi].slice(0, g.threshold)),
-      );
-      const sampledRanks = new Set(["0"]); // canonical subset already checked
-      while (sampledRanks.size <= SAMPLE_SIZE) {
-        const rank = randomAdmissibleRank(total, rng);
-        const key = rank.toString();
-        if (sampledRanks.has(key)) continue;
-        sampledRanks.add(key);
-        check(admissibleSubsetAtRank(groupThreshold, groups, shares, rank));
-      }
-      process.stdout.write(
-        `\n  ok  ${SAMPLE_SIZE + 1} of ${total.toLocaleString("en-US")} admissible ` +
-          "combinations verified (1 canonical + " + SAMPLE_SIZE + " unique random ranks).\n" +
-          "  !   Exhaustive checking was SKIPPED: this layout has too many\n" +
-          "  !   combinations to enumerate. Every subset tested passed, but not\n" +
-          "  !   every subset was tested. A simpler layout such as 2of3 or 3of5\n" +
-          "  !   is verified exhaustively.\n",
-      );
-    }
-
+    verifyShareLayout({ groupThreshold, groups, shares, entropy, rng });
     printShares(shares, groups, groupThreshold);
     process.stdout.write(
       "\nNEXT STEP - before you rely on these, test recovery:\n" +
@@ -2554,6 +2677,10 @@ never argv, never an environment variable, never a file.
 SLIP-39 shares here carry the BIP-39 ENTROPY, not a BIP-32 seed. Restore them
 with --combine. A Trezor reads a SLIP-39 secret as a seed directly and would
 show different addresses. Shares never carry your BIP-39 passphrase.
+
+Node 26 LTS is required. The capability guard's network scope (--allow-net)
+exists only from Node 25; on an older runtime --prove-guard reports the network
+probes as NOT ENFORCED and the launchers refuse secret-capable commands.
 
 On macOS a downloaded binary is quarantined and Gatekeeper kills it silently
 (exit 137, no output). Clear it with:  xattr -d com.apple.quarantine ./FILE
