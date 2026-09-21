@@ -84,6 +84,6 @@
   },
   "devDependencies": {
     "esbuild": "0.28.2",
-    "fast-check": "4.9.0"
+    "fast-check": "4.10.0"
   }
 }
