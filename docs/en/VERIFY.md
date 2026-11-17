@@ -113,6 +113,11 @@ Exact versions and details are in `dist/BUILD-RECIPE.txt`.
   published v2.4.0 binaries) on its
   named darwin/arm64 or linux/x64 platform, because it embeds the entire runtime.
 
+The v2.4.0 macOS binaries also use macOS 26's code-signature allocation.
+macOS 27 reserves 18,000 fewer bytes by default; using `--signature-size 18000`
+while signing the executable still named `heatdeath` reproduces the release
+byte-for-byte. CI independently rebuilds and verifies on macOS 26.
+
 Two subtleties, both established by measurement rather than assumption:
 
 - esbuild must run **from the repository root with a relative path** to the entry
