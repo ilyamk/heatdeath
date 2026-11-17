@@ -6,12 +6,12 @@ Releases separate online native builders from offline signing. GitHub never
 receives a production signing key.
 
 1. Merge only after all required CI, security and reproducibility checks pass.
-2. Create a signed annotated tag matching `package.json`, for example `v2.2.0`.
+2. Create a signed annotated tag matching `package.json`, after bumping it for the new release.
 3. `Build release candidate` builds independent darwin/arm64 and linux/x64 parts.
 4. The combine job requires identical bundle, source archive, SBOM and recipe,
    then creates one manifest covering both binaries and provenance records.
 5. Download the seven-day unsigned candidate and reproduce each native part on
-   its named platform with Node v26.7.0 and npm 11.19.0.
+   its named platform with Node v26.13.1 and npm 12.2.2.
 6. Sign `SHA256SUMS` with each offline identity:
 
 ```sh

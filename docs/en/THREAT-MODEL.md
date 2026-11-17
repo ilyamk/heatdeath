@@ -239,7 +239,7 @@ up in swap". A webview GUI makes us exactly that, and the argument turns against
 
 **The cost in numbers.** Today: **5 packages, about 2.9 MB, all from one author**, and of
 those `@scure/bip39` passed a Cure53 audit (January 2022) and was self-audited at
-2.2.0 in April 2026. We pin 2.3.0, whose delta has been reviewed and regression-
+2.2.0 in April 2026. We pin 2.4.0, whose delta has been reviewed and regression-
 tested here but is outside that audit scope. I will not claim an audit for the
 other four. A minimal GUI brings in a transitive tree orders of magnitude larger,
 in which nobody has checked anything.

@@ -6,14 +6,21 @@
 bundles with the pinned esbuild, and self-tests `dist/heatdeath.mjs`. It does not
 create native binaries, provenance or signatures.
 
-`npm run build:release` creates one native part of release `v2.3.0`. It requires:
+Reproduce historical releases from their own tags and original toolchain pins.
+Install the pinned npm explicitly: Node bundles a different npm version.
 
-- a clean worktree and annotated `v2.3.0` tag pointing at `HEAD`;
-- Node v26.7.0, npm 11.19.0 and esbuild 0.28.2;
+```sh
+npm install --global --ignore-scripts npm@12.2.2
+```
+
+`npm run build:release` creates one native part of release `v2.4.0`. It requires:
+
+- a clean worktree and annotated `v2.4.0` tag pointing at `HEAD`;
+- Node v26.13.1, npm 12.2.2 and esbuild 0.28.2;
 - either darwin/arm64 or linux/x64.
 
 Each platform produces the same bundle, deterministic
-`heatdeath-v2.3.0-source.tar.gz`, SPDX `heatdeath-v2.3.0.spdx.json` and recipe,
+`heatdeath-v2.4.0-source.tar.gz`, SPDX `heatdeath-v2.4.0.spdx.json` and recipe,
 plus its own SEA and provenance:
 
 - `heatdeath-darwin-arm64` and `SOURCE-PROVENANCE-darwin-arm64.json`;

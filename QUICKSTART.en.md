@@ -69,7 +69,7 @@ is not running.
    for.
 2. Write it to the first stick.
 3. Put the following on the second stick:
-   - the v2.3 `heatdeath-linux-x64` release binary;
+   - the v2.4 `heatdeath-linux-x64` release binary;
    - the signed `SHA256SUMS` and the independently trusted public-key
      fingerprints used to verify that release;
    - optionally `heatdeath.mjs` and the exact Node linux-x64 archive if you prefer
