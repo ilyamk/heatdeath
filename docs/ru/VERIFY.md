@@ -68,8 +68,8 @@ chmod 0755 ./dist/heatdeath-linux-x64
 
 ==> artifact hashes
   ok    heatdeath.mjs
-  ok    heatdeath-v2.3.0-source.tar.gz
-  ok    heatdeath-v2.3.0.spdx.json
+  ok    heatdeath-v2.4.0-source.tar.gz
+  ok    heatdeath-v2.4.0.spdx.json
   ok    heatdeath-darwin-arm64
   ok    heatdeath-linux-x64
   ok    SOURCE-PROVENANCE-darwin-arm64.json
@@ -108,7 +108,8 @@ npm run build:release
 
 - **Бандл `.mjs` воспроизводим на любой машине** с той же версией esbuild.
   В нём нет ни абсолютных путей, ни временных меток.
-- **Каждый бинарник воспроизводим только против той же сборки Node** (v26.7.0)
+- **Каждый бинарник воспроизводим только против той же сборки Node** (v26.13.1
+  для опубликованных бинарников v2.4.0)
   на указанной платформе darwin/arm64 или linux/x64, потому что содержит рантайм целиком.
 
 Две тонкости, установленные измерением:

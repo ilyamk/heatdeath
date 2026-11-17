@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-expected_commit="4072e48705af9d93e3c0f6e29e93b5e9a40caed8"
+expected_commit="6056c5845d34205a83cf7108042adb137325c9df"
 if ! cast --version | grep -q "$expected_commit"; then
-  echo "FATAL: cast must be Foundry 1.7.1 commit $expected_commit" >&2
+  echo "FATAL: cast must be Foundry 1.9.0 commit $expected_commit" >&2
   exit 1
 fi
 
@@ -36,4 +36,4 @@ while IFS='|' read -r path expected_key expected_address; do
 done < <(node test/evm-oracle-dump.mjs --oracle)
 test "$count" -eq 24
 
-echo "Foundry 1.7.1 oracle matched 28 EVM derivation/address vectors"
+echo "Foundry 1.9.0 oracle matched 28 EVM derivation/address vectors"

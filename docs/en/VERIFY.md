@@ -69,8 +69,8 @@ Expected:
 
 ==> artifact hashes
   ok    heatdeath.mjs
-  ok    heatdeath-v2.3.0-source.tar.gz
-  ok    heatdeath-v2.3.0.spdx.json
+  ok    heatdeath-v2.4.0-source.tar.gz
+  ok    heatdeath-v2.4.0.spdx.json
   ok    heatdeath-darwin-arm64
   ok    heatdeath-linux-x64
   ok    SOURCE-PROVENANCE-darwin-arm64.json
@@ -109,7 +109,8 @@ Exact versions and details are in `dist/BUILD-RECIPE.txt`.
 
 - **The `.mjs` bundle reproduces on any machine** with the same esbuild version.
   It contains neither absolute paths nor timestamps.
-- **Each binary reproduces only against the same Node build** (v26.7.0) on its
+- **Each binary reproduces only against the same Node build** (v26.13.1 for the
+  published v2.4.0 binaries) on its
   named darwin/arm64 or linux/x64 platform, because it embeds the entire runtime.
 
 Two subtleties, both established by measurement rather than assumption:

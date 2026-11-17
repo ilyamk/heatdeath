@@ -263,13 +263,15 @@ function primaryAccounts(seed, scheme, count) {
     // and calling deriveChild() is only valid for the "metamask" template;
     // reusing that shortcut for "account" would silently emit wrong addresses.
     const node = master.derive(path);
-    assert.ok(node.privateKey, `No private key at ${path}`);
+    const privateKey = node.privateKey;
+    assert.ok(privateKey, `No private key at ${path}`);
     nodes.push(node);
     accounts.push({
       index,
       path,
-      privateKey: Buffer.from(node.privateKey),
-      ...addressFromPrivateKey(node.privateKey),
+      // bip32 returns a copy. Share its storage so the caller wipes that copy too.
+      privateKey: Buffer.from(privateKey.buffer, privateKey.byteOffset, privateKey.byteLength),
+      ...addressFromPrivateKey(privateKey),
     });
   }
   return {
@@ -1194,8 +1196,12 @@ function selfTest({ quiet = false } = {}) {
     "0xF278cF59F82eDcf871d630F28EcC8056f25C1cdb",
   );
   assert.equal(rehearsal.accounts[0].path, "m/44'/60'/0'/0/0");
+  assert.ok(Buffer.isBuffer(rehearsal.accounts[0].privateKey));
+  const rehearsalPrivateKey = rehearsal.accounts[0].privateKey.toString("hex");
   rehearsal.dispose();
+  assert.equal(rehearsal.accounts[0].privateKey.toString("hex"), rehearsalPrivateKey);
   rehearsal.accounts[0].privateKey.fill(0);
+  assert.ok(rehearsal.accounts[0].privateKey.every((byte) => byte === 0));
   rehearsalSeed.fill(0);
   log("Safe owner public rehearsal vector: fingerprint, path and address");
 

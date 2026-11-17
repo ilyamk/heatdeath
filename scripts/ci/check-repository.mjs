@@ -21,6 +21,12 @@ for (const section of ["dependencies", "devDependencies"]) {
   }
 }
 
+const lock = JSON.parse(fs.readFileSync(path.join(ROOT, "package-lock.json"), "utf8"));
+for (const field of ["version", "engines", "dependencies", "devDependencies"]) {
+  assert.deepEqual(lock.packages?.[""]?.[field], pkg[field],
+    `package-lock.json root ${field} must match package.json`);
+}
+
 const checkoutCommands = [
   "self-test", "doctor", "rehearse:safe-owner", "safe-owner",
   "wizard", "generate", "generate:dice", "generate:account",
@@ -93,11 +99,12 @@ assert.deepEqual(unsafeEvents, [], "privileged PR promotion events are prohibite
 assert.deepEqual(unsafeUses, [], "every external action must use a full commit SHA");
 
 const releaseNpm = pkg.packageManager.slice("npm@".length);
-for (const workflow of ["release-candidate.yml", "release-verify.yml"]) {
-  const text = fs.readFileSync(path.join(workflowDirectory, workflow), "utf8");
-  assert.ok(text.includes(`test "$(npm --version)" = "${releaseNpm}"`),
-    `${workflow} must enforce package.json's exact release npm`);
-}
+const releaseCandidateWorkflow = fs.readFileSync(
+  path.join(workflowDirectory, "release-candidate.yml"), "utf8");
+assert.ok(releaseCandidateWorkflow.includes(`test "$(npm --version)" = "${releaseNpm}"`),
+  "release-candidate.yml must enforce package.json's exact release npm");
+assert.ok(releaseCandidateWorkflow.includes(`npm install --global --ignore-scripts npm@${releaseNpm}`),
+  "release-candidate.yml must install the pinned npm independently of Node's bundled npm");
 const reproducibleWorkflow = fs.readFileSync(
   path.join(workflowDirectory, "reproducible-build.yml"), "utf8");
 assert.doesNotMatch(reproducibleWorkflow, /^\s+paths:/m,
@@ -105,8 +112,12 @@ assert.doesNotMatch(reproducibleWorkflow, /^\s+paths:/m,
 
 const releaseVerifyWorkflow = fs.readFileSync(
   path.join(workflowDirectory, "release-verify.yml"), "utf8");
-const releaseCandidateWorkflow = fs.readFileSync(
-  path.join(workflowDirectory, "release-candidate.yml"), "utf8");
+assert.ok(releaseVerifyWorkflow.includes('require("./source/package.json").packageManager'),
+  "release verification must read the npm pin from the checked-out tag");
+assert.ok(releaseVerifyWorkflow.includes('npm install --global --ignore-scripts "npm@$npm_version"'),
+  "release verification must install the tag's npm without lifecycle scripts");
+assert.ok(releaseVerifyWorkflow.includes('test "$(npm --version)" = "$npm_version"'),
+  "release verification must enforce the tag's exact npm");
 assert.match(
   releaseCandidateWorkflow,
   /combine:[\s\S]*?permissions:[\s\S]*?id-token: write[\s\S]*?attestations: write[\s\S]*?artifact-metadata: write/,

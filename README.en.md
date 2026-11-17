@@ -607,7 +607,7 @@ seen is this repository, the signature proves internal integrity and nothing mor
 artifact is the readable `.mjs`. Inside the binary the source sits in plain text
 (`strings` pulls it out), the sandbox flags can be patched, and `--prove-sandbox`
 in a patched build will print the same `6/6`. Self-attestation by an artifact the
-attacker controls proves nothing. Each native binary **freezes Node v26.7.0**:
+attacker controls proves nothing. The v2.4.0 native binaries **freeze Node v26.13.1**:
 every future CVE in V8 stays there until it is rebuilt, whereas when you
 run from source the patches arrive through your package manager.
 
